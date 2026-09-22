@@ -1,0 +1,41 @@
+#+title: git-bug.el — Magit sections for the git-bug bug tracker
+
+Adds a collapsible "Bugs" section to =magit-status= buffers listing the
+bugs of the [[https://github.com/MichaelMure/git-bug][git-bug]] distributed bug tracker, which stores them in the
+repository's own =refs/bugs/*= references.
+
+* Usage
+
+Add the section inserter to the status sections hook:
+
+#+begin_src emacs-lisp
+(add-hook 'magit-status-sections-hook #'git-bug-insert-status-bugs 100)
+#+end_src
+
+Every bug is a collapsible section; expand it to see its labels,
+description and comments.
+On a bug heading:
+
+- =RET= copies the short id
+- =x= flips the open/closed status
+
+Which bugs are listed is controlled by =git-bug-status-section-scope=
+(=open=, =closed= or =all=; default =open=).
+The heading always shows the listed count over the total.
+
+* Requirements
+
+- Emacs 30.1
+- Magit 4.0
+- the =git-bug= binary (its path is baked in when built with Nix)
+
+* Building
+
+#+begin_src sh
+nix build          # byte-compile (warnings as errors) + ERT suite
+nix flake check    # package + tests + checkdoc + package-lint
+nix fmt            # format via treefmt
+#+end_src
+
+The ERT suite drives the real =git-bug= binary inside throwaway
+repositories, so =git= and =git-bug= are needed during the build.
