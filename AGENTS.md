@@ -19,10 +19,15 @@ section into `magit-status` via `magit-status-sections-hook`.
   binary in a throwaway repo.
 - `flake.nix` — everything Nix: melpaBuild with `substituteInPlace`
   patching `git-bug-program` to the `pkgs.git-bug` store path,
-  checks, devShell, treefmt.
+  checks, devShell, treefmt.  Also wires the tree-sitter
+  `markdown`/`markdown-inline` grammars (renamed `parser` files) into
+  the test run via `treesit-extra-load-path`.
 
 ## Conventions
 
+- Emacs 31.1 minimum: bug bodies are fontified with the builtin
+  `markdown-ts-mode`; faces go on `font-lock-face`, never `face`
+  (font-lock strips `face` on refontification).
 - License AGPL-3.0-or-later; keep the full header in every .el file.
 - `turnCompilationWarningToError` stays on; fix warnings, do not silence.
 - Prefix `git-bug-` / `git-bug--`; keep checkdoc and package-lint clean.

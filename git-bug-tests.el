@@ -52,19 +52,21 @@
            ,@body)
        (delete-directory ,repo t))))
 
-(defun git-bug-tests--new-bug (repo title)
-  "Create a bug in REPO with TITLE and return its short id."
-  (let ((body (make-temp-file "git-bug-tests-body")))
+(defun git-bug-tests--new-bug (repo title &optional description)
+  "Create a bug in REPO with TITLE and return its short id.
+DESCRIPTION is the bug body; default to a plain-text one."
+  (let ((file (make-temp-file "git-bug-tests-body")))
     (unwind-protect
         (progn
-          (with-temp-file body
-            (insert title "\n\nProblem.  The frobnicator segfaults.\n"
-                    "Decision.  Guard empty input.\n"))
+          (with-temp-file file
+            (insert title "\n\n" (or description
+                                     "Problem.  The frobnicator segfaults.\n"
+                                     "Decision.  Guard empty input.\n")))
           (let ((out (git-bug--call repo
                                     "bug" "new" "--non-interactive"
-                                    "-F" body)))
+                                    "-F" file)))
             (car (split-string out))))
-      (delete-file body))))
+      (delete-file file))))
 
 (ert-deftest git-bug-tests-list-empty-repo ()
   "An empty repository yields no bugs."
@@ -149,6 +151,23 @@
           (font-lock-mode 1)
           (font-lock-ensure)
           (should (eq (get-text-property start 'font-lock-face) 'magit-hash)))))))
+
+(ert-deftest git-bug-tests-insert-markdown-fontification ()
+  "Bug bodies are fontified as Markdown when the grammars exist."
+  (skip-unless (git-bug--markdown-ts-ready-p))
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Broken frobnicator"
+                           "Text with **bold** word.\n")
+    (with-temp-buffer
+      (git-bug-insert-status-bugs)
+      (goto-char (point-min))
+      (search-forward "bold")
+      (let ((start (match-beginning 0)))
+        (should (memq 'markdown-ts-bold
+                      (ensure-list (get-text-property start 'font-lock-face))))
+        ;; Markup symbols are hidden, their contents are not.
+        (should (eq (get-text-property (1- start) 'invisible) t))
+        (should (null (get-text-property start 'invisible)))))))
 
 (ert-deftest git-bug-tests-insert-status-bugs-scope ()
   "The scope customizations controls which bugs are rendered."

@@ -43,6 +43,17 @@
         }:
         let
           inherit (pkgs.emacsPackages) melpaBuild;
+          # Tree-sitter grammars for the markdown fontification of bug
+          # bodies, renamed to the "libtree-sitter-<lang>.so" names
+          # treesit loads: the grammar packages ship the shared object
+          # as a bare "parser" file.
+          markdownGrammars = pkgs.runCommand "tree-sitter-markdown-grammars" { } ''
+            mkdir -p $out
+            ln -s ${pkgs.tree-sitter-grammars.tree-sitter-markdown}/parser \
+              $out/libtree-sitter-markdown.so
+            ln -s ${pkgs.tree-sitter-grammars.tree-sitter-markdown-inline}/parser \
+              $out/libtree-sitter-markdown-inline.so
+          '';
         in
         {
           packages.git-bug = melpaBuild {
@@ -88,6 +99,7 @@
               emacs --batch -L . \
                 --eval "(require 'package)" \
                 -f package-initialize \
+                --eval "(setq treesit-extra-load-path '(\"${markdownGrammars}\"))" \
                 -l git-bug-tests.elc \
                 -f ert-run-tests-batch-and-exit
               runHook postCheck
@@ -97,7 +109,10 @@
 
             # The tests initialize temporary git repositories and run the
             # git-bug CLI against them.
-            nativeCheckInputs = [ pkgs.git ];
+            nativeCheckInputs = [
+              pkgs.git
+              markdownGrammars
+            ];
 
             meta = {
               description = "Magit status sections for the git-bug bug tracker";
@@ -161,12 +176,15 @@
           # Dev shell mirroring what the package talks to at runtime: the
           # git-bug CLI, git and a real Emacs for interactive testing
           # (nix build; emacs -l result/share/emacs/site-lisp/elpa/git-bug-*/git-bug-autoloads.el).
+          # MARKDOWN_GRAMMARS holds the tree-sitter grammars for markdown
+          # fontification; add it to `treesit-extra-load-path'.
           devShells.default = pkgs.mkShell {
             packages = [
               pkgs.emacs
               pkgs.git
               pkgs.git-bug
             ];
+            MARKDOWN_GRAMMARS = markdownGrammars;
           };
 
           # `nix fmt' formats the flake via treefmt, never the formatters

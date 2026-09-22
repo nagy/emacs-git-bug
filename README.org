@@ -14,6 +14,9 @@ Add the section inserter to the status sections hook:
 
 Every bug is a collapsible section; expand it to see its labels,
 description and comments.
+Bug bodies are fontified as Markdown with the builtin
+=markdown-ts-mode= when its tree-sitter grammars are installed;
+Markdown markup symbols are then hidden.
 On a bug heading:
 
 - =RET= copies the short id
@@ -25,9 +28,12 @@ The heading always shows the listed count over the total.
 
 * Requirements
 
-- Emacs 30.1
+- Emacs 31.1
 - Magit 4.0
 - the =git-bug= binary (its path is baked in when built with Nix)
+- optional: the tree-sitter grammars =markdown= and =markdown-inline=
+  (=M-x treesit-install-language-grammar=; for Markdown fontification
+  of bug bodies)
 
 * Building
 
@@ -39,3 +45,6 @@ nix fmt            # format via treefmt
 
 The ERT suite drives the real =git-bug= binary inside throwaway
 repositories, so =git= and =git-bug= are needed during the build.
+The dev shell exports =MARKDOWN_GRAMMARS= with the tree-sitter
+grammars for Markdown fontification; add it to
+=treesit-extra-load-path= for interactive testing.

@@ -19,7 +19,7 @@
 ;; Author: Daniel Nagy
 ;; Version: 0.1.0
 ;; Keywords: tools, vc
-;; Package-Requires: ((emacs "30.1") (magit "4.0.0"))
+;; Package-Requires: ((emacs "31.1") (magit "4.0.0"))
 ;; URL: https://github.com/nagy/emacs-git-bug
 
 ;;; Commentary:
@@ -34,8 +34,10 @@
 ;;   (add-hook 'magit-status-sections-hook #'git-bug-insert-status-bugs 100)
 ;;
 ;; Every bug is a collapsible section; expand it to see its labels,
-;; description and comments.  On a bug heading, `RET' copies the short
-;; id and `x' flips the open/closed status.
+;; description and comments.  Bug bodies are fontified as Markdown
+;; with the builtin `markdown-ts-mode', when its tree-sitter grammars
+;; are installed; markup symbols are then hidden.  On a bug heading,
+;; `RET' copies the short id and `x' flips the open/closed status.
 ;;
 ;; Which bugs are listed is controlled by `git-bug-status-section-scope'.
 ;; When this package is built with Nix, `git-bug-program' is rewritten
@@ -47,6 +49,7 @@
 (require 'cl-lib)
 (require 'json)
 (require 'magit)
+(require 'markdown-ts-mode)
 (require 'subr-x)
 
 (defgroup git-bug nil
@@ -161,6 +164,53 @@ STATUS is either \"open\" or \"close\", matching the git-bug
 command line."
   (git-bug--call repo "bug" "status" status id))
 
+(defun git-bug--markdown-ts-ready-p ()
+  "Return non-nil when markdown fontification is available.
+That is the case when the builtin `markdown-ts-mode' exists and
+both of the tree-sitter grammars it needs, `markdown' and
+`markdown-inline', are installed."
+  (and (fboundp 'markdown-ts-mode)
+       (treesit-available-p)
+       (treesit-language-available-p 'markdown t)
+       (treesit-language-available-p 'markdown-inline t)))
+
+(defun git-bug--fontify-markdown (string)
+  "Return STRING with Markdown syntax highlighting applied.
+Fontification runs STRING through `markdown-ts-mode' in a
+temporary buffer with `markdown-ts-hide-markup' enabled: markup
+symbols (backticks, emphasis markers, ...) get an `invisible'
+property of t, which hides them unconditionally in the target
+buffer.  The `face' properties of the mode are copied to
+`font-lock-face', which refontification does not strip (see
+`font-lock-default-unfontify-region').
+
+Return STRING unchanged when the tree-sitter grammars are not
+installed (see `git-bug--markdown-ts-ready-p') or when the mode
+signals an error."
+  (if (not (git-bug--markdown-ts-ready-p))
+      string
+    (condition-case nil
+        (let ((markdown-ts-hide-markup t))
+          (with-temp-buffer
+            (insert string)
+            (delay-mode-hooks (markdown-ts-mode))
+            (font-lock-ensure)
+            (let ((out (copy-sequence string))
+                  (pos (point-min)))
+              (while (< pos (point-max))
+                (let* ((end (or (next-property-change pos) (point-max)))
+                       (face (get-text-property pos 'face))
+                       (hidden (get-text-property pos 'invisible)))
+                  ;; Buffer position POS is string index (1- POS).
+                  (when face
+                    (put-text-property (1- pos) (1- end)
+                                       'font-lock-face face out))
+                  (when hidden
+                    (put-text-property (1- pos) (1- end) 'invisible t out))
+                  (setq pos end)))
+              out)))
+      (error string))))
+
 (defun git-bug--insert-detail (detail)
   "Insert the labels, description and comments of DETAIL.
 DETAIL is a bug alist as returned by `git-bug--detail'."
@@ -171,7 +221,7 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
   (let ((comments (alist-get 'comments detail)))
     ;; Comment number zero is the bug description.
     (when-let* ((body (car comments)))
-      (insert (alist-get 'message body) "\n"))
+      (insert (git-bug--fontify-markdown (alist-get 'message body)) "\n"))
     (cl-loop
      for comment in (cdr comments)
      for n from 1
@@ -184,7 +234,8 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
                             (if name 'magit-dimmed 'magit-hash))
                 (propertize ":" 'font-lock-face 'magit-dimmed))
         (insert "\n")
-        (insert (alist-get 'message comment) "\n"))))
+        (insert (git-bug--fontify-markdown (alist-get 'message comment))
+                "\n"))))
 
 (defun git-bug--insert-bug (repo bug)
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
