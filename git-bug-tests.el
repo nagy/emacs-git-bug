@@ -605,6 +605,51 @@ DESCRIPTION is the bug body; default to a plain-text one."
       (should (equal (alist-get 'status (car (git-bug--list repo)))
                      "closed")))))
 
+(defun git-bug-tests--fake-program (body)
+  "Create an executable script with BODY."
+  (let ((script (make-temp-file "git-bug-fake" nil ".sh"))
+        (shell (or (executable-find "bash") (executable-find "sh"))))
+    (with-temp-file script
+      (insert "#!" shell "\n" body))
+    (set-file-modes script #o755)
+    script))
+
+(ert-deftest git-bug-tests-call-environment ()
+  "Subprocesses get quiet git settings and UTF-8 coding."
+  (let* ((repo (file-name-as-directory
+                (make-temp-file "git-bug-tests" t)))
+         (script (git-bug-tests--fake-program
+                  "printf '%s|%s|%s\n' \"$GIT_PAGER\" \"$PAGER\" \"$GIT_OPTIONAL_LOCKS\"\n")))
+    (unwind-protect
+        (let ((git-bug-program script))
+          (should (equal (git-bug--call repo) "cat|cat|0\n")))
+      (delete-file script)
+      (delete-directory repo t))))
+
+(ert-deftest git-bug-tests-call-stdin ()
+  "Standard input reaches git-bug unchanged."
+  (let* ((repo (file-name-as-directory
+                (make-temp-file "git-bug-tests" t)))
+         (script (git-bug-tests--fake-program "cat\n")))
+    (unwind-protect
+        (let ((git-bug-program script))
+          (should (equal (git-bug--call-with-input repo "hello\n")
+                         "hello\n")))
+      (delete-file script)
+      (delete-directory repo t))))
+
+(ert-deftest git-bug-tests-call-error-type ()
+  "CLI failures signal `git-bug-error'."
+  (let* ((repo (file-name-as-directory
+                (make-temp-file "git-bug-tests" t)))
+         (script (git-bug-tests--fake-program
+                  "printf 'boom\\n' >&2\nexit 3\n")))
+    (unwind-protect
+        (let ((git-bug-program script))
+          (should-error (git-bug--call repo) :type 'git-bug-error))
+      (delete-file script)
+      (delete-directory repo t))))
+
 (ert-deftest git-bug-tests-broken-tracker-visible ()
   "A failing git-bug renders an unavailable section, not a broken status."
   (git-bug-tests--with-repo repo

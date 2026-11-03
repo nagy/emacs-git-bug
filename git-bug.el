@@ -58,6 +58,8 @@
   :prefix "git-bug-"
   :link '(url-link :tag "Repository" "https://github.com/nagy/emacs-git-bug"))
 
+(define-error 'git-bug-error "Git-bug error")
+
 (defcustom git-bug-program "git-bug"
   "The git-bug executable used to interact with bugs.
 When this package is built with Nix, this is rewritten to the
@@ -134,10 +136,16 @@ git-bug prints progress noise there anyway.  Signal an error when
 git-bug exits with a non-zero status."
   (apply #'git-bug--call-with-input repo nil args))
 
+(defun git-bug--process-environment ()
+  "Return `process-environment' with quiet git settings prepended."
+  (cons "GIT_OPTIONAL_LOCKS=0"
+        (cons "PAGER=cat"
+              (cons "GIT_PAGER=cat" process-environment))))
+
 (defun git-bug--call-with-input (repo input &rest args)
   "Run git-bug with ARGS in REPO, feeding INPUT to standard input.
-Return standard output.  Signal an error when git-bug exits with a
-non-zero status."
+Return standard output.  Signal `git-bug-error' when git-bug exits
+with a non-zero status."
   (let ((stderr (make-temp-file "git-bug-stderr"))
         (stdin (and input (make-temp-file "git-bug-stdin"))))
     (unwind-protect
@@ -148,15 +156,19 @@ non-zero status."
                 (insert input))))
           (with-temp-buffer
             (let* ((default-directory (file-name-as-directory repo))
-                   (exit (apply #'call-process git-bug-program stdin
+                   (process-environment (git-bug--process-environment))
+                   (coding-system-for-read 'utf-8-unix)
+                   (coding-system-for-write 'utf-8-unix)
+                   (exit (apply #'process-file git-bug-program stdin
                                 (list t stderr) nil args)))
               (unless (eq exit 0)
                 (let ((err (string-trim (git-bug--read-file stderr))))
-                  (error "Git-bug %s failed: %s"
-                         (string-join args " ")
-                         (if (string-empty-p err)
-                             (string-trim (buffer-string))
-                           err))))
+                  (signal 'git-bug-error
+                          (list (format "Git-bug %s failed: %s"
+                                        (string-join args " ")
+                                        (if (string-empty-p err)
+                                            (string-trim (buffer-string))
+                                          err))))))
               (buffer-string))))
       (delete-file stderr)
       (when stdin
