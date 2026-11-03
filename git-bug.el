@@ -266,6 +266,7 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
   (magit-insert-section (git-bug-bug-section bug 'hide)
     (let ((id (alist-get 'human_id bug))
+          (bug-id (alist-get 'id bug))
           (status (alist-get 'status bug)))
       ;; Note the `font-lock-face' property, not `face': font-lock
       ;; refontification strips `face', leaving the ids unfontified.
@@ -282,7 +283,7 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
       ;; Fetching details for every collapsed bug blocks `magit-status'.
       (magit-insert-section-body
         (when-let* ((detail (condition-case nil
-                                (git-bug--detail repo id)
+                                (git-bug--detail repo bug-id)
                               (error nil))))
           (git-bug--insert-detail detail))))))
 
@@ -324,7 +325,7 @@ shows the number of listed bugs over the number of all bugs."
   (if-let* ((bug (magit-section-value-if 'git-bug-bug-section)))
       (progn
         (git-bug--set-status (magit-toplevel)
-                             (alist-get 'human_id bug)
+                             (alist-get 'id bug)
                              (if (equal (alist-get 'status bug) "open")
                                  "close"
                                "open"))

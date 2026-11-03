@@ -171,6 +171,36 @@ DESCRIPTION is the bug body; default to a plain-text one."
           (magit-section-show (magit-current-section))
           (should (= calls 1)))))))
 
+(ert-deftest git-bug-tests-cli-calls-use-full-id ()
+  "Detail and status commands receive the full id, not the short id."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Broken frobnicator"))
+           (bug (car (git-bug--list repo)))
+           (full (alist-get 'id bug))
+           (seen-detail nil)
+           (seen-status nil))
+      (cl-letf (((symbol-function 'git-bug--detail)
+                 (lambda (_repo id &rest _)
+                   (setq seen-detail id)
+                   nil)))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (goto-char (point-min))
+          (search-forward short)
+          (goto-char (match-beginning 0))
+          (magit-section-show (magit-current-section))))
+      (should (equal seen-detail full))
+      (cl-letf (((symbol-function 'git-bug--set-status)
+                 (lambda (_repo id _status)
+                   (setq seen-status id))))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (goto-char (point-min))
+          (search-forward short)
+          (goto-char (match-beginning 0))
+          (git-bug-toggle-status-at-point)))
+      (should (equal seen-status full)))))
+
 (ert-deftest git-bug-tests-insert-status-faces ()
   "The bug id is fontified and survives font-lock refontification."
   (git-bug-tests--with-repo repo
