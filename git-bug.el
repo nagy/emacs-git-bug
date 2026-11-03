@@ -258,12 +258,22 @@ human id and finally to a literal placeholder."
            (cons id 'magit-hash))
           (t (cons "unknown" 'magit-hash)))))
 
+(defun git-bug--clean-title (title)
+  "Return TITLE on one line."
+  (string-trim (replace-regexp-in-string "[\r\n]+" " " (or title ""))))
+
+(defun git-bug--sorted-labels (labels)
+  "Return a sorted copy of LABELS."
+  (sort (copy-sequence labels) #'string<))
+
 (defun git-bug--insert-detail (detail)
   "Insert the labels, description and comments of DETAIL.
 DETAIL is a bug alist as returned by `git-bug--detail'."
   (when-let* ((labels (alist-get 'labels detail)))
-    (insert (propertize (format "Labels: %s" (string-join labels ", "))
-                        'font-lock-face 'magit-tag))
+    (insert (propertize
+             (format "Labels: %s"
+                     (string-join (git-bug--sorted-labels labels) ", "))
+             'font-lock-face 'magit-tag))
     (insert "\n"))
   (let ((comments (alist-get 'comments detail)))
     ;; Comment number zero is the bug description.
@@ -297,7 +307,7 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
                            'font-lock-face (if (equal status "open")
                                                'success
                                              'magit-dimmed))
-               (propertize (alist-get 'title bug)
+               (propertize (git-bug--clean-title (alist-get 'title bug))
                            'font-lock-face 'magit-section-heading)))
       ;; Magit runs this body only when the user expands the section.
       ;; Fetching details for every collapsed bug blocks `magit-status'.

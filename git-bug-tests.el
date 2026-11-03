@@ -86,6 +86,31 @@ DESCRIPTION is the bug body; default to a plain-text one."
           (should (equal (alist-get 'title bug) "Broken frobnicator"))
           (should (equal (alist-get 'status bug) "open")))))))
 
+(ert-deftest git-bug-tests-heading-and-label-cleanup ()
+  "Titles stay on one line and labels render in stable order."
+  (should (equal (git-bug--clean-title "One\nTwo\r\nThree") "One Two Three"))
+  (should (equal (git-bug--sorted-labels '("z" "a" "m")) '("a" "m" "z")))
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Broken frobnicator")
+    (let ((bug (car (git-bug--list repo))))
+      (setf (alist-get 'title bug) "One\nTwo")
+      (setf (alist-get 'labels bug) '("z" "a"))
+      (cl-letf (((symbol-function 'git-bug--list)
+                 (lambda (_repo) (list bug)))
+                ((symbol-function 'git-bug--detail)
+                 (lambda (&rest _)
+                   '((labels . ("z" "a"))
+                     (comments . (((message . "Body"))))))))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (should (string-match-p "One Two" (buffer-string)))
+          (should-not (string-match-p "One\nTwo" (buffer-string)))
+          (goto-char (point-min))
+          (search-forward "One Two")
+          (goto-char (match-beginning 0))
+          (magit-section-show (magit-current-section))
+          (should (string-match-p "Labels: a, z" (buffer-string))))))))
+
 (ert-deftest git-bug-tests-select-scope ()
   "Scope filtering keeps exactly the requested statuses."
   (let ((bugs '(((status . "open"))
