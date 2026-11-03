@@ -155,6 +155,29 @@ DESCRIPTION is the bug body; default to a plain-text one."
           (magit-section-show (magit-current-section))
           (should (string-match-p "Labels: a, z" (buffer-string))))))))
 
+(ert-deftest git-bug-tests-heading-metadata ()
+  "Headings carry sorted labels, reply count and age."
+  (should (= (git-bug--comment-count '((comments . 3))) 2))
+  (should (= (git-bug--comment-count '((comments . 1))) 0))
+  (should (equal (git-bug--age-string nil) ""))
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Broken frobnicator")
+    (let ((bug (car (git-bug--list repo))))
+      (setf (alist-get 'labels bug) '("b" "a"))
+      (setf (alist-get 'comments bug) 3)
+      (setf (alist-get 'edit_time bug)
+            `((timestamp . ,(truncate (float-time)))))
+      (cl-letf (((symbol-function 'git-bug--list)
+                 (lambda (_repo) (list bug)))
+                ((symbol-function 'git-bug--detail)
+                 (lambda (&rest _) nil)))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (let ((text (buffer-string)))
+            (should (string-match-p "\\[a,b\\]" text))
+            (should (string-match-p "(2)" text))
+            (should (string-match-p "now" text))))))))
+
 (ert-deftest git-bug-tests-select-scope ()
   "Scope filtering keeps exactly the requested statuses."
   (let ((bugs '(((status . "open"))

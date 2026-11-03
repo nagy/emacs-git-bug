@@ -573,6 +573,37 @@ Git-bug takes the title from the first line of the message."
                      (mapcar #'string-trim value)))
       (git-bug--after-bug-change repo human))))
 
+(defun git-bug--comment-count (bug)
+  "Return the number of replies in BUG."
+  (let ((comments (alist-get 'comments bug)))
+    (if (numberp comments) (max 0 (1- comments)) 0)))
+
+(defun git-bug--age-string (timestamp)
+  "Return a short relative age for TIMESTAMP, or an empty string."
+  (if (not (numberp timestamp))
+      ""
+    (let ((delta (max 0 (floor (- (float-time) timestamp)))))
+      (cond ((< delta 60) "now")
+            ((< delta 3600) (format "%dm" (/ delta 60)))
+            ((< delta 86400) (format "%dh" (/ delta 3600)))
+            ((< delta 2592000) (format "%dd" (/ delta 86400)))
+            (t (format "%dmo" (/ delta 2592000)))))))
+
+(defun git-bug--heading-extras (bug)
+  "Return propertized labels, reply count and age for BUG."
+  (let* ((labels (git-bug--sorted-labels (alist-get 'labels bug)))
+         (comments (git-bug--comment-count bug))
+         (age (git-bug--age-string
+               (alist-get 'timestamp (alist-get 'edit_time bug)))))
+    (concat (when labels
+              (concat " " (propertize (format "[%s]" (string-join labels ","))
+                                       'font-lock-face 'magit-tag)))
+            (when (> comments 0)
+              (concat " " (propertize (format "(%d)" comments)
+                                       'font-lock-face 'magit-dimmed)))
+            (when (not (string-empty-p age))
+              (concat " " (propertize age 'font-lock-face 'magit-dimmed))))))
+
 (defun git-bug--insert-bug (repo bug)
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
   (magit-insert-section (git-bug-bug-section bug 'hide)
@@ -582,14 +613,16 @@ Git-bug takes the title from the first line of the message."
       ;; Note the `font-lock-face' property, not `face': font-lock
       ;; refontification strips `face', leaving the ids unfontified.
       (magit-insert-heading
-       (format "%s %s %s"
-               (propertize id 'font-lock-face 'magit-hash)
+       (concat (propertize id 'font-lock-face 'magit-hash)
+               " "
                (propertize (format "%-6s" status)
                            'font-lock-face (if (equal status "open")
                                                'success
                                              'magit-dimmed))
+               " "
                (propertize (git-bug--clean-title (alist-get 'title bug))
-                           'font-lock-face 'magit-section-heading)))
+                           'font-lock-face 'magit-section-heading)
+               (git-bug--heading-extras bug)))
       ;; Magit runs this body only when the user expands the section.
       ;; Fetching details for every collapsed bug blocks `magit-status'.
       (magit-insert-section-body
