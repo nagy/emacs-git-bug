@@ -80,6 +80,16 @@ all bugs."
   :type 'boolean
   :group 'git-bug)
 
+(defcustom git-bug-status-section-show-empty t
+  "Whether to show the Bugs section in a repository without bugs."
+  :type 'boolean
+  :group 'git-bug)
+
+(defcustom git-bug-status-section-show-errors t
+  "Whether to show the Bugs section when git-bug fails."
+  :type 'boolean
+  :group 'git-bug)
+
 (defvar-keymap git-bug-bug-section-map
   :doc "Keymap for `git-bug-bug-section' headings."
   "RET" #'git-bug-copy-id-at-point
@@ -320,6 +330,21 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
                             (error-message-string err))
                     'font-lock-face 'error))))))))
 
+(defun git-bug--insert-bugs (repo bugs)
+  "Insert the Bugs section for BUGS in REPO.
+Handle a nil BUGS list when `git-bug-status-section-show-empty' is
+non-nil."
+  (let ((shown (git-bug--select bugs git-bug-status-section-scope)))
+    (when (or bugs git-bug-status-section-show-empty)
+      (magit-insert-section (git-bug-bugs-section)
+        (magit-insert-heading
+         (format "Bugs (%d/%d)" (length shown) (length bugs)))
+        (if bugs
+            (dolist (bug shown)
+              (git-bug--insert-bug repo bug))
+          (insert (propertize "No bugs.\n" 'font-lock-face 'magit-dimmed)))
+        (insert ?\n)))))
+
 ;;;###autoload
 (defun git-bug-insert-status-bugs ()
   "Insert a section listing the git-bug bugs of the repository.
@@ -329,17 +354,17 @@ shows the number of listed bugs over the number of all bugs."
   (when-let* ((repo (magit-toplevel))
               ((git-bug--initialized-p repo)))
     (condition-case err
-        (when-let* ((bugs (git-bug--list repo)))
-          (let ((shown (git-bug--select bugs git-bug-status-section-scope)))
-            (magit-insert-section (git-bug-bugs-section)
-              (magit-insert-heading
-               (format "Bugs (%d/%d)" (length shown) (length bugs)))
-              (dolist (bug shown)
-                (git-bug--insert-bug repo bug))
-              (insert ?\n))))
+        (git-bug--insert-bugs repo (git-bug--list repo))
       (error
        (when git-bug-status-section-verbose
-         (message "Git-bug: %s" (error-message-string err)))))))
+         (message "Git-bug: %s" (error-message-string err)))
+       (when git-bug-status-section-show-errors
+         (magit-insert-section (git-bug-bugs-section)
+           (magit-insert-heading "Bugs (unavailable)")
+           (insert (propertize
+                    (format "Git-bug failed: %s\n"
+                            (error-message-string err))
+                    'font-lock-face 'error))))))))
 
 ;;;###autoload
 (defun git-bug-copy-id-at-point ()

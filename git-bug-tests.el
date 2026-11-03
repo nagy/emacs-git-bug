@@ -74,6 +74,19 @@ DESCRIPTION is the bug body; default to a plain-text one."
   (git-bug-tests--with-repo repo
     (should (null (git-bug--list repo)))))
 
+(ert-deftest git-bug-tests-empty-initialized-repo ()
+  "An initialized repository shows an explicit empty section."
+  (git-bug-tests--with-repo repo
+    (with-temp-buffer
+      (git-bug-insert-status-bugs)
+      (let ((text (buffer-string)))
+        (should (string-match-p "Bugs (0/0)" text))
+        (should (string-match-p "No bugs\\." text))))
+    (let ((git-bug-status-section-show-empty nil))
+      (with-temp-buffer
+        (git-bug-insert-status-bugs)
+        (should (string-empty-p (buffer-string)))))))
+
 (ert-deftest git-bug-tests-new-bug-is-listed ()
   "A freshly created bug shows up with title and status."
   (git-bug-tests--with-repo repo
@@ -362,15 +375,21 @@ DESCRIPTION is the bug body; default to a plain-text one."
       (should (equal (alist-get 'status (car (git-bug--list repo)))
                      "closed")))))
 
-(ert-deftest git-bug-tests-broken-tracker-is-silent ()
-  "A failing git-bug never breaks the status buffer."
+(ert-deftest git-bug-tests-broken-tracker-visible ()
+  "A failing git-bug renders an unavailable section, not a broken status."
   (git-bug-tests--with-repo repo
     (git-bug-tests--new-bug repo "Broken frobnicator")
     (let ((git-bug-program "false"))
       (should-error (git-bug--list repo))
       (with-temp-buffer
         (git-bug-insert-status-bugs)
-        (should (string-empty-p (buffer-string)))))))
+        (let ((text (buffer-string)))
+          (should (string-match-p "Bugs (unavailable)" text))
+          (should (string-match-p "Git-bug failed" text))))
+      (let ((git-bug-status-section-show-errors nil))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (should (string-empty-p (buffer-string))))))))
 
 (ert-deftest git-bug-tests-unrelated-repo-is-silent ()
   "A repository without git-bug state never invokes git-bug."
