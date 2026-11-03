@@ -533,6 +533,10 @@ DESCRIPTION is the bug body; default to a plain-text one."
               #'git-bug-show-bug-at-point))
   (should (eq (lookup-key git-bug-bug-section-map (kbd "w"))
               #'git-bug-copy-id-at-point))
+  (should (eq (lookup-key git-bug-bug-section-map (kbd "W"))
+              #'git-bug-copy-full-id-at-point))
+  (should (eq (lookup-key git-bug-bug-section-map (kbd "C-c r"))
+              #'git-bug-copy-ref-at-point))
   (should (eq (lookup-key git-bug-bug-section-map (kbd "x"))
               #'git-bug-toggle-status-at-point))
   (should (eq (lookup-key git-bug-bug-section-map (kbd "c"))
@@ -555,6 +559,22 @@ DESCRIPTION is the bug body; default to a plain-text one."
         (goto-char (match-beginning 0))
         (git-bug-copy-id-at-point)
         (should (equal (car kill-ring) id))))))
+
+(ert-deftest git-bug-tests-copy-reference-variants ()
+  "Copy the short id, full id and ref of a bug."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Broken frobnicator"))
+           (bug (car (git-bug--list repo)))
+           (full (alist-get 'id bug)))
+      (with-temp-buffer
+        (git-bug-insert-status-bugs)
+        (goto-char (point-min))
+        (search-forward short)
+        (goto-char (match-beginning 0))
+        (git-bug-copy-id-at-point '(4))
+        (should (equal (car kill-ring) full))
+        (git-bug-copy-ref-at-point)
+        (should (equal (car kill-ring) (format "refs/bugs/%s" full)))))))
 
 (ert-deftest git-bug-tests-toggle-status-at-point ()
   "The toggle command flips the status of the section at point."

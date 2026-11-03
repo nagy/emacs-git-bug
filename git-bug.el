@@ -455,6 +455,9 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
   :parent special-mode-map
   "q" #'quit-window
   "g" #'git-bug-refresh-buffer
+  "w" #'git-bug-copy-id-at-point
+  "W" #'git-bug-copy-full-id-at-point
+  "C-c r" #'git-bug-copy-ref-at-point
   "x" #'git-bug-toggle-status-in-buffer
   "c" #'git-bug-add-comment-at-point
   "l" #'git-bug-edit-labels-at-point)
@@ -852,15 +855,51 @@ shows the number of listed bugs over the number of all bugs."
                             (error-message-string err))
                     'font-lock-face 'error))))))))
 
+(defun git-bug--current-bug-reference (kind)
+  "Return the KIND reference for the bug at point.
+KIND is `short', `full' or `ref'."
+  (cond
+   ((derived-mode-p 'git-bug-mode)
+    (pcase kind
+      ('short git-bug--buffer-human-id)
+      ('full git-bug--buffer-id)
+      ('ref (format "refs/bugs/%s" git-bug--buffer-id))))
+   ((magit-section-value-if 'git-bug-bug-section)
+    (let ((bug (magit-section-value-if 'git-bug-bug-section)))
+      (pcase kind
+        ('short (alist-get 'human_id bug))
+        ('full (alist-get 'id bug))
+        ('ref (format "refs/bugs/%s" (alist-get 'id bug))))))
+   (t (user-error "No bug at point"))))
+
+(defun git-bug--copy-reference (kind)
+  "Copy the KIND reference of the bug at point."
+  (let ((value (git-bug--current-bug-reference kind)))
+    (kill-new value)
+    (message "Copied %s" value)))
+
 ;;;###autoload
-(defun git-bug-copy-id-at-point ()
-  "Copy the short id of the bug at point to the kill ring."
+(defun git-bug-copy-id-at-point (&optional arg)
+  "Copy the short id of the bug at point.
+With one prefix argument copy the full id.  With two prefix
+arguments copy the bug ref."
+  (interactive "P")
+  (git-bug--copy-reference
+   (cond ((equal arg '(16)) 'ref)
+         ((equal arg '(4)) 'full)
+         (t 'short))))
+
+;;;###autoload
+(defun git-bug-copy-full-id-at-point ()
+  "Copy the full id of the bug at point."
   (interactive)
-  (if-let* ((bug (magit-section-value-if 'git-bug-bug-section)))
-      (let ((id (alist-get 'human_id bug)))
-        (kill-new id)
-        (message "Copied bug id %s" id))
-    (user-error "No bug at point")))
+  (git-bug--copy-reference 'full))
+
+;;;###autoload
+(defun git-bug-copy-ref-at-point ()
+  "Copy the git ref of the bug at point."
+  (interactive)
+  (git-bug--copy-reference 'ref))
 
 ;;;###autoload
 (defun git-bug-toggle-status-at-point ()
@@ -881,6 +920,8 @@ shows the number of listed bugs over the number of all bugs."
   :doc "Keymap for `git-bug-bug-section' headings."
   "RET" #'git-bug-show-bug-at-point
   "w"   #'git-bug-copy-id-at-point
+  "W"   #'git-bug-copy-full-id-at-point
+  "C-c r" #'git-bug-copy-ref-at-point
   "x"   #'git-bug-toggle-status-at-point
   "c"   #'git-bug-add-comment-at-point
   "l"   #'git-bug-edit-labels-at-point)
