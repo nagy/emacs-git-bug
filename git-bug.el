@@ -467,6 +467,16 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
             "\n")
     (insert (propertize (format "Created: %s\nEdited: %s\n" created edited)
                         'font-lock-face 'magit-dimmed))
+    (when-let* ((participants (alist-get 'participants detail)))
+      (insert (propertize
+               (format "Participants: %s"
+                       (string-join
+                        (mapcar (lambda (person)
+                                  (car (git-bug--author-display person)))
+                                participants)
+                        ", "))
+               'font-lock-face 'magit-dimmed))
+      (insert "\n"))
     (insert "\n")
     (git-bug--insert-detail detail)))
 

@@ -535,6 +535,8 @@ DESCRIPTION is the bug body; default to a plain-text one."
                 (should buffer-read-only)
                 (should (string-match-p "Broken frobnicator" (buffer-string)))
                 (should (string-match-p "Author: Test User" (buffer-string)))
+                (should (string-match-p "Participants: Test User"
+                                        (buffer-string)))
                 (should (string-match-p "Body with" (buffer-string)))
                 (git-bug-toggle-status-in-buffer)
                 (should (string-match-p "closed" (buffer-string))))))
