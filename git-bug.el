@@ -131,9 +131,9 @@ Matching is case-insensitive against name, login and human id."
 (defun git-bug--call (repo &rest args)
   "Run git-bug with ARGS in REPO and return its standard output.
 Standard error goes to a temporary file: the split-destination
-form of `call-process' only accepts file names for it, and
-git-bug prints progress noise there anyway.  Signal an error when
-git-bug exits with a non-zero status."
+form of `process-file' only accepts file names for it, and
+git-bug prints progress noise there anyway.  Signal
+`git-bug-error' when git-bug exits with a non-zero status."
   (apply #'git-bug--call-with-input repo nil args))
 
 (defun git-bug--process-environment ()
@@ -176,9 +176,10 @@ with a non-zero status."
 
 (defun git-bug--read-file (file)
   "Return the contents of FILE as a string."
-  (with-temp-buffer
-    (insert-file-contents file)
-    (buffer-string)))
+  (let ((coding-system-for-read 'utf-8-unix))
+    (with-temp-buffer
+      (insert-file-contents file)
+      (buffer-string))))
 
 (defun git-bug--parse-json (string)
   "Parse JSON STRING into Lisp data.
@@ -209,8 +210,8 @@ noise from a global `magit-status-sections-hook' entry."
 
 (defun git-bug--list (repo)
   "Return all bugs in REPO as a list of alists.
-Return nil when REPO contains no bugs.  Signal an error when
-git-bug fails."
+Return nil when REPO contains no bugs.  Signal `git-bug-error'
+when git-bug fails."
   (let ((out (git-bug--call repo "bug" "--format" "json")))
     (unless (string-blank-p out)
       (git-bug--parse-json out))))
@@ -262,10 +263,12 @@ git-bug fails."
                        (downcase (or (alist-get 'title b) ""))))))
       ('status
        (sort sorted (lambda (a b)
-                      (or (string-lessp (or (alist-get 'status a) "")
-                                        (or (alist-get 'status b) ""))
-                          (> (git-bug--bug-time 'edit_time a)
-                             (git-bug--bug-time 'edit_time b))))))
+                      (let ((sa (or (alist-get 'status a) ""))
+                            (sb (or (alist-get 'status b) "")))
+                        (if (equal sa sb)
+                            (> (git-bug--bug-time 'edit_time a)
+                               (git-bug--bug-time 'edit_time b))
+                          (string-lessp sa sb))))))
       ('id
        (sort sorted (lambda (a b)
                       (string-lessp (or (alist-get 'id a) "")
@@ -449,8 +452,8 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
 (defun git-bug--insert-bug-buffer (detail)
   "Insert the full rendered DETAIL into the current buffer."
   (let* ((title (git-bug--clean-title (alist-get 'title detail)))
-         (id (alist-get 'human_id detail))
-         (status (alist-get 'status detail))
+         (id (or (alist-get 'human_id detail) ""))
+         (status (or (alist-get 'status detail) "unknown"))
          (author (git-bug--author-display (alist-get 'author detail)))
          (created (git-bug--format-time (alist-get 'create_time detail)))
          (edited (git-bug--format-time (alist-get 'edit_time detail))))
@@ -550,6 +553,7 @@ With FORCE, ignore the detail cache."
                   (format "*git-bug: %s*" (or human id)))))
     (with-current-buffer buffer
       (git-bug-mode)
+      (setq-local default-directory (file-name-as-directory repo))
       (setq-local git-bug--buffer-repo repo
                   git-bug--buffer-id id
                   git-bug--buffer-human-id human
@@ -831,9 +835,9 @@ Git-bug takes the title from the first line of the message."
 (defun git-bug--insert-bug (repo bug)
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
   (magit-insert-section (git-bug-bug-section bug 'hide)
-    (let ((id (alist-get 'human_id bug))
+    (let ((id (or (alist-get 'human_id bug) ""))
           (bug-id (alist-get 'id bug))
-          (status (alist-get 'status bug)))
+          (status (or (alist-get 'status bug) "unknown")))
       ;; Note the `font-lock-face' property, not `face': font-lock
       ;; refontification strips `face', leaving the ids unfontified.
       (magit-insert-heading
