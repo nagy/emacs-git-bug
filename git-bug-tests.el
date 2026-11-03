@@ -350,6 +350,39 @@ DESCRIPTION is the bug body; default to a plain-text one."
           (git-bug-insert-status-bugs)
           (should (string-match-p "Bugs (1/1)" (buffer-string))))))))
 
+(ert-deftest git-bug-tests-markdown-link-keeps-action ()
+  "Markdown links stay clickable after property copying."
+  (skip-unless (git-bug--markdown-ts-ready-p))
+  (let* ((out (git-bug--fontify-markdown "[link](https://example.com)\n"))
+         (pos (string-match "link" out)))
+    (should (get-text-property pos 'action out))
+    (should (equal (get-text-property pos 'help-echo out)
+                   "https://example.com"))))
+
+(ert-deftest git-bug-tests-show-bug-buffer ()
+  "The dedicated buffer renders a bug and toggles its status."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug
+                   repo "Broken frobnicator" "Body with **bold** text.\n"))
+           (bug (car (git-bug--list repo))))
+      (unwind-protect
+          (progn
+            (git-bug-show-bug repo bug)
+            (let ((buffer (get-buffer (format "*git-bug: %s*" short))))
+              (should buffer)
+              (with-current-buffer buffer
+                (should (derived-mode-p 'git-bug-mode))
+                (should buffer-read-only)
+                (should (string-match-p "Broken frobnicator" (buffer-string)))
+                (should (string-match-p "Author: Test User" (buffer-string)))
+                (should (string-match-p "Body with" (buffer-string)))
+                (git-bug-toggle-status-in-buffer)
+                (should (string-match-p "closed" (buffer-string))))))
+        (when-let* ((buffer (get-buffer (format "*git-bug: %s*" short))))
+          (kill-buffer buffer)))
+      (should (equal (alist-get 'status (car (git-bug--list repo)))
+                     "closed")))))
+
 (ert-deftest git-bug-tests-copy-id-at-point ()
   "The copy command grabs the short id from the section at point."
   (git-bug-tests--with-repo repo

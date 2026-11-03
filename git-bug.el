@@ -249,6 +249,12 @@ signals an error."
                                        'font-lock-face face out))
                   (when hidden
                     (put-text-property (1- pos) (1- end) 'invisible t out))
+                  ;; Keep Markdown link buttons usable.  Do not copy
+                  ;; `display': bug bodies stay free of images.
+                  (dolist (prop '(help-echo action category button
+                                  mouse-face keymap))
+                    (when-let* ((value (get-text-property pos prop)))
+                      (put-text-property (1- pos) (1- end) prop value out)))
                   (setq pos end)))
               out)))
       (error string))))
@@ -301,6 +307,106 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
         (insert "\n")
         (insert (git-bug--fontify-markdown (alist-get 'message comment))
                 "\n"))))
+
+(defun git-bug--format-time (object)
+  "Return the timestamp in OBJECT as a readable string."
+  (let ((timestamp (alist-get 'timestamp object)))
+    (if timestamp
+        (format-time-string "%Y-%m-%d %H:%M" timestamp)
+      "unknown")))
+
+(defun git-bug--insert-bug-buffer (detail)
+  "Insert the full rendered DETAIL into the current buffer."
+  (let* ((title (git-bug--clean-title (alist-get 'title detail)))
+         (id (alist-get 'human_id detail))
+         (status (alist-get 'status detail))
+         (author (git-bug--author-display (alist-get 'author detail)))
+         (created (git-bug--format-time (alist-get 'create_time detail)))
+         (edited (git-bug--format-time (alist-get 'edit_time detail))))
+    (insert (propertize title 'font-lock-face 'magit-section-heading) "\n")
+    (insert (propertize id 'font-lock-face 'magit-hash)
+            " "
+            (propertize status
+                        'font-lock-face (if (equal status "open")
+                                            'success
+                                          'magit-dimmed))
+            "\n")
+    (insert (propertize (format "Author: %s" (car author))
+                        'font-lock-face (cdr author))
+            "\n")
+    (insert (propertize (format "Created: %s\nEdited: %s\n" created edited)
+                        'font-lock-face 'magit-dimmed))
+    (insert "\n")
+    (git-bug--insert-detail detail)))
+
+(defvar-local git-bug--buffer-repo nil
+  "Repository of the bug shown in this buffer.")
+
+(defvar-local git-bug--buffer-id nil
+  "Full id of the bug shown in this buffer.")
+
+(defvar-local git-bug--buffer-human-id nil
+  "Short id of the bug shown in this buffer.")
+
+(defvar-local git-bug--buffer-status nil
+  "Status of the bug shown in this buffer.")
+
+(defvar-keymap git-bug-mode-map
+  :doc "Keymap for `git-bug-mode'."
+  :parent special-mode-map
+  "q" #'quit-window
+  "g" #'git-bug-refresh-buffer
+  "x" #'git-bug-toggle-status-in-buffer)
+
+(define-derived-mode git-bug-mode special-mode "Git-Bug"
+  "Major mode for viewing a single bug."
+  (setq-local buffer-read-only t)
+  (visual-line-mode 1))
+
+(defun git-bug-refresh-buffer ()
+  "Refresh the current `git-bug-mode' buffer from git-bug."
+  (interactive)
+  (unless (derived-mode-p 'git-bug-mode)
+    (user-error "Not a git-bug buffer"))
+  (let ((detail (git-bug--detail git-bug--buffer-repo git-bug--buffer-id)))
+    (setq-local git-bug--buffer-status (alist-get 'status detail))
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (git-bug--insert-bug-buffer detail)
+      (goto-char (point-min)))))
+
+(defun git-bug-toggle-status-in-buffer ()
+  "Toggle the status of the bug in the current `git-bug-mode' buffer."
+  (interactive)
+  (unless (derived-mode-p 'git-bug-mode)
+    (user-error "Not a git-bug buffer"))
+  (git-bug--set-status git-bug--buffer-repo
+                       git-bug--buffer-id
+                       (if (equal git-bug--buffer-status "open")
+                           "close"
+                         "open"))
+  (git-bug-refresh-buffer))
+
+(defun git-bug-show-bug (repo bug)
+  "Show BUG from REPO in a dedicated `git-bug-mode' buffer."
+  (let* ((id (alist-get 'id bug))
+         (human (alist-get 'human_id bug))
+         (buffer (get-buffer-create
+                  (format "*git-bug: %s*" (or human id)))))
+    (with-current-buffer buffer
+      (git-bug-mode)
+      (setq-local git-bug--buffer-repo repo
+                  git-bug--buffer-id id
+                  git-bug--buffer-human-id human)
+      (git-bug-refresh-buffer))
+    (pop-to-buffer buffer)))
+
+(defun git-bug-show-bug-at-point ()
+  "Show the bug at point in a dedicated buffer."
+  (interactive)
+  (if-let* ((bug (magit-section-value-if 'git-bug-bug-section)))
+      (git-bug-show-bug (magit-toplevel) bug)
+    (user-error "No bug at point")))
 
 (defun git-bug--insert-bug (repo bug)
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
