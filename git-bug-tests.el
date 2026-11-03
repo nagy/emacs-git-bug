@@ -143,8 +143,33 @@ DESCRIPTION is the bug body; default to a plain-text one."
         (let ((text (buffer-string)))
           (should (string-match-p "Bugs (1/1)" text))
           (should (string-match-p "Broken frobnicator" text))
+          ;; Details load only after expansion.
+          (should-not (string-match-p "Labels: priority:P2" text))
+          (goto-char (point-min))
+          (search-forward "Broken frobnicator")
+          (goto-char (match-beginning 0))
+          (magit-section-show (magit-current-section)))
+        (let ((text (buffer-string)))
           (should (string-match-p "Labels: priority:P2" text))
           (should (string-match-p "Problem\\." text)))))))
+
+(ert-deftest git-bug-tests-details-load-lazily ()
+  "A collapsed bug section does not shell out until expansion."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Broken frobnicator")
+    (let ((calls 0))
+      (cl-letf (((symbol-function 'git-bug--detail)
+                 (lambda (&rest _)
+                   (cl-incf calls)
+                   nil)))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (should (= calls 0))
+          (goto-char (point-min))
+          (search-forward "Broken frobnicator")
+          (goto-char (match-beginning 0))
+          (magit-section-show (magit-current-section))
+          (should (= calls 1)))))))
 
 (ert-deftest git-bug-tests-insert-status-faces ()
   "The bug id is fontified and survives font-lock refontification."
@@ -181,6 +206,10 @@ DESCRIPTION is the bug body; default to a plain-text one."
                            "Text with **bold** word.\n")
     (with-temp-buffer
       (git-bug-insert-status-bugs)
+      (goto-char (point-min))
+      (search-forward "Broken frobnicator")
+      (goto-char (match-beginning 0))
+      (magit-section-show (magit-current-section))
       (goto-char (point-min))
       (search-forward "bold")
       (let ((start (match-beginning 0)))

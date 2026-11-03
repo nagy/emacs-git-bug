@@ -259,10 +259,13 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
                                              'magit-dimmed))
                (propertize (alist-get 'title bug)
                            'font-lock-face 'magit-section-heading)))
-      (when-let* ((detail (condition-case nil
-                              (git-bug--detail repo id)
-                            (error nil))))
-        (git-bug--insert-detail detail)))))
+      ;; Magit runs this body only when the user expands the section.
+      ;; Fetching details for every collapsed bug blocks `magit-status'.
+      (magit-insert-section-body
+        (when-let* ((detail (condition-case nil
+                                (git-bug--detail repo id)
+                              (error nil))))
+          (git-bug--insert-detail detail))))))
 
 ;;;###autoload
 (defun git-bug-insert-status-bugs ()
