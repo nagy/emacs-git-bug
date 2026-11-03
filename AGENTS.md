@@ -15,7 +15,8 @@ section into `magit-status` via `magit-status-sections-hook`.
 
 ## Layout
 
-- `git-bug.el` — the package (sections, commands, CLI wrapper).
+- `git-bug.el` — the package (sections, commands, CLI wrapper,
+  viewer and compose modes).
 - `git-bug-tests.el` — ERT suite; each test drives the real `git-bug`
   binary in a throwaway repo.
 - `flake.nix` — everything Nix: melpaBuild with `substituteInPlace`

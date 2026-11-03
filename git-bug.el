@@ -96,7 +96,8 @@ all bugs."
   "w"   #'git-bug-copy-id-at-point
   "x"   #'git-bug-toggle-status-at-point)
 
-(defclass git-bug-bugs-section (magit-section) ()
+(defclass git-bug-bugs-section (magit-section)
+  ((keymap :initform 'git-bug-bugs-section-map))
   "Class for the section listing the bugs of a repository.")
 
 (defclass git-bug-bug-section (magit-section)
@@ -109,21 +110,35 @@ Standard error goes to a temporary file: the split-destination
 form of `call-process' only accepts file names for it, and
 git-bug prints progress noise there anyway.  Signal an error when
 git-bug exits with a non-zero status."
-  (let ((stderr (make-temp-file "git-bug-stderr")))
+  (apply #'git-bug--call-with-input repo nil args))
+
+(defun git-bug--call-with-input (repo input &rest args)
+  "Run git-bug with ARGS in REPO, feeding INPUT to standard input.
+Return standard output.  Signal an error when git-bug exits with a
+non-zero status."
+  (let ((stderr (make-temp-file "git-bug-stderr"))
+        (stdin (and input (make-temp-file "git-bug-stdin"))))
     (unwind-protect
-        (with-temp-buffer
-          (let* ((default-directory (file-name-as-directory repo))
-                 (exit (apply #'call-process git-bug-program nil
-                              (list t stderr) nil args)))
-            (unless (eq exit 0)
-              (let ((err (string-trim (git-bug--read-file stderr))))
-                (error "Git-bug %s failed: %s"
-                       (string-join args " ")
-                       (if (string-empty-p err)
-                           (string-trim (buffer-string))
-                         err))))
-            (buffer-string)))
-      (delete-file stderr))))
+        (progn
+          (when stdin
+            (let ((coding-system-for-write 'utf-8-unix))
+              (with-temp-file stdin
+                (insert input))))
+          (with-temp-buffer
+            (let* ((default-directory (file-name-as-directory repo))
+                   (exit (apply #'call-process git-bug-program stdin
+                                (list t stderr) nil args)))
+              (unless (eq exit 0)
+                (let ((err (string-trim (git-bug--read-file stderr))))
+                  (error "Git-bug %s failed: %s"
+                         (string-join args " ")
+                         (if (string-empty-p err)
+                             (string-trim (buffer-string))
+                           err))))
+              (buffer-string))))
+      (delete-file stderr)
+      (when stdin
+        (delete-file stdin)))))
 
 (defun git-bug--read-file (file)
   "Return the contents of FILE as a string."
@@ -408,6 +423,95 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
   (if-let* ((bug (magit-section-value-if 'git-bug-bug-section)))
       (git-bug-show-bug (magit-toplevel) bug)
     (user-error "No bug at point")))
+
+(defvar-local git-bug--compose-callback nil
+  "Function called with the composed text on submit.")
+
+(defvar-keymap git-bug-compose-mode-map
+  :doc "Keymap for `git-bug-compose-mode'."
+  :parent text-mode-map
+  "C-c C-c" #'git-bug-compose-submit
+  "C-c C-k" #'git-bug-compose-cancel)
+
+(define-derived-mode git-bug-compose-mode text-mode "Git-Bug-Compose"
+  "Major mode for composing a git-bug message."
+  (setq-local header-line-format
+              (substitute-command-keys
+               "\[git-bug-compose-submit] submit  \[git-bug-compose-cancel] cancel")))
+
+(defun git-bug--compose (description initial callback)
+  "Open a compose buffer with DESCRIPTION, INITIAL text and CALLBACK."
+  (let ((buffer (get-buffer-create "*git-bug compose*")))
+    (with-current-buffer buffer
+      (erase-buffer)
+      (insert initial)
+      (git-bug-compose-mode)
+      (setq-local git-bug--compose-callback callback)
+      (setq-local header-line-format
+                  (format "%s  %s" description
+                          (substitute-command-keys
+                           "\[git-bug-compose-submit] submit  \[git-bug-compose-cancel] cancel")))
+      (goto-char (point-max)))
+    (pop-to-buffer buffer)))
+
+(defun git-bug-compose-submit ()
+  "Submit the current compose buffer."
+  (interactive)
+  (let ((text (string-trim (buffer-string))))
+    (when (string-empty-p text)
+      (user-error "Empty message"))
+    (funcall git-bug--compose-callback text)
+    (kill-buffer (current-buffer))))
+
+(defun git-bug-compose-cancel ()
+  "Cancel the current compose buffer."
+  (interactive)
+  (kill-buffer (current-buffer)))
+
+(defun git-bug--refresh-after-write (repo)
+  "Refresh a `magit-status-mode' buffer for REPO, when one exists."
+  (let ((buffer (cl-find-if
+                 (lambda (candidate)
+                   (with-current-buffer candidate
+                     (and (derived-mode-p 'magit-status-mode)
+                          (ignore-errors
+                            (equal (magit-toplevel) repo)))))
+                 (buffer-list))))
+    (cond (buffer
+           (with-current-buffer buffer
+             (magit-refresh)))
+          ((derived-mode-p 'magit-mode)
+           (magit-refresh)))))
+
+(defun git-bug--create-bug (repo title body)
+  "Create a bug in REPO with TITLE and BODY and return its short id.
+Git-bug takes the title from the first line of the message."
+  (let ((out (git-bug--call-with-input
+              repo (concat (git-bug--clean-title title) "\n\n" body)
+              "bug" "new" "--non-interactive" "-F" "-")))
+    (car (split-string out))))
+
+;;;###autoload
+(defun git-bug-new-bug ()
+  "Create a new git-bug bug in the current repository."
+  (interactive)
+  (let ((repo (magit-toplevel)))
+    (unless repo
+      (user-error "Not inside a Git repository"))
+    (let ((title (string-trim (read-string "Bug title: "))))
+      (when (string-empty-p title)
+        (user-error "Empty title"))
+      (git-bug--compose
+       (format "New bug: %s" title)
+       ""
+       (lambda (body)
+         (let ((id (git-bug--create-bug repo title body)))
+           (git-bug--refresh-after-write repo)
+           (message "Created bug %s" id)))))))
+
+(defvar-keymap git-bug-bugs-section-map
+  :doc "Keymap for the Bugs section heading."
+  "n" #'git-bug-new-bug)
 
 (defun git-bug--insert-bug (repo bug)
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."

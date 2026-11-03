@@ -87,6 +87,37 @@ DESCRIPTION is the bug body; default to a plain-text one."
         (git-bug-insert-status-bugs)
         (should (string-empty-p (buffer-string)))))))
 
+(ert-deftest git-bug-tests-create-bug ()
+  "The package can create a bug through stdin."
+  (git-bug-tests--with-repo repo
+    (let ((id (git-bug--create-bug repo "Created from Emacs" "Body text.\n")))
+      (should (string-match-p "\\`[[:xdigit:]]\\{7\\}\\'" id))
+      (let* ((bug (car (git-bug--list repo)))
+             (detail (git-bug--detail repo (alist-get 'id bug))))
+        (should (equal (alist-get 'title bug) "Created from Emacs"))
+        (should (string-match-p
+                 "Body text"
+                 (alist-get 'message
+                            (car (alist-get 'comments detail)))))))))
+
+(ert-deftest git-bug-tests-compose-submit ()
+  "A compose buffer passes its text to the callback and closes."
+  (let ((received nil)
+        (buffer (generate-new-buffer " *git-bug compose test*")))
+    (unwind-protect
+        (with-current-buffer buffer
+          (git-bug-compose-mode)
+          (insert "hello")
+          (setq-local git-bug--compose-callback
+                      (lambda (text) (setq received text)))
+          (git-bug-compose-submit))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))
+    (should (equal received "hello")))
+  (with-temp-buffer
+    (git-bug-compose-mode)
+    (should-error (git-bug-compose-submit) :type 'user-error)))
+
 (ert-deftest git-bug-tests-new-bug-is-listed ()
   "A freshly created bug shows up with title and status."
   (git-bug-tests--with-repo repo

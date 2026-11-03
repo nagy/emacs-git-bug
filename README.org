@@ -23,6 +23,9 @@ On a bug heading:
 - =w= copies the short id
 - =x= flips the open/closed status
 
+On the =Bugs= heading, =n= creates a bug.  The compose buffer uses
+=C-c C-c= to submit and =C-c C-k= to cancel.
+
 Which bugs are listed is controlled by =git-bug-status-section-scope=
 (=open=, =closed= or =all=; default =open=).
 The heading always shows the listed count over the total.
