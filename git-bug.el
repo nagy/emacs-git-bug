@@ -171,8 +171,10 @@ both of the tree-sitter grammars it needs, `markdown' and
 `markdown-inline', are installed."
   (and (fboundp 'markdown-ts-mode)
        (treesit-available-p)
-       (treesit-language-available-p 'markdown t)
-       (treesit-language-available-p 'markdown-inline t)))
+       ;; `treesit-language-available-p' with DETAIL returns (nil . DATA)
+       ;; when the grammar is missing.  `car' extracts the boolean.
+       (car (treesit-language-available-p 'markdown t))
+       (car (treesit-language-available-p 'markdown-inline t))))
 
 (defun git-bug--fontify-markdown (string)
   "Return STRING with Markdown syntax highlighting applied.

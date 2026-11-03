@@ -25,6 +25,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'ert)
 (require 'git-bug)
 
@@ -151,6 +152,17 @@ DESCRIPTION is the bug body; default to a plain-text one."
           (font-lock-mode 1)
           (font-lock-ensure)
           (should (eq (get-text-property start 'font-lock-face) 'magit-hash)))))))
+
+(ert-deftest git-bug-tests-markdown-ready-p ()
+  "Grammar availability follows the boolean, not the DETAIL data."
+  (cl-letf (((symbol-function 'treesit-available-p) (lambda () t))
+            ((symbol-function 'treesit-language-available-p)
+             (lambda (&rest _) '(t))))
+    (should (git-bug--markdown-ts-ready-p)))
+  (cl-letf (((symbol-function 'treesit-available-p) (lambda () t))
+            ((symbol-function 'treesit-language-available-p)
+             (lambda (&rest _) '(nil not-found "missing"))))
+    (should-not (git-bug--markdown-ts-ready-p))))
 
 (ert-deftest git-bug-tests-insert-markdown-fontification ()
   "Bug bodies are fontified as Markdown when the grammars exist."
