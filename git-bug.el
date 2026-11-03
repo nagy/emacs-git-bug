@@ -90,12 +90,6 @@ all bugs."
   :type 'boolean
   :group 'git-bug)
 
-(defvar-keymap git-bug-bug-section-map
-  :doc "Keymap for `git-bug-bug-section' headings."
-  "RET" #'git-bug-show-bug-at-point
-  "w"   #'git-bug-copy-id-at-point
-  "x"   #'git-bug-toggle-status-at-point)
-
 (defclass git-bug-bugs-section (magit-section)
   ((keymap :initform 'git-bug-bugs-section-map))
   "Class for the section listing the bugs of a repository.")
@@ -372,7 +366,9 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
   :parent special-mode-map
   "q" #'quit-window
   "g" #'git-bug-refresh-buffer
-  "x" #'git-bug-toggle-status-in-buffer)
+  "x" #'git-bug-toggle-status-in-buffer
+  "c" #'git-bug-add-comment-at-point
+  "l" #'git-bug-edit-labels-at-point)
 
 (define-derived-mode git-bug-mode special-mode "Git-Bug"
   "Major mode for viewing a single bug."
@@ -509,9 +505,73 @@ Git-bug takes the title from the first line of the message."
            (git-bug--refresh-after-write repo)
            (message "Created bug %s" id)))))))
 
-(defvar-keymap git-bug-bugs-section-map
-  :doc "Keymap for the Bugs section heading."
-  "n" #'git-bug-new-bug)
+(defun git-bug--current-bug ()
+  "Return (REPO ID HUMAN-ID) for the bug at point."
+  (cond
+   ((derived-mode-p 'git-bug-mode)
+    (list git-bug--buffer-repo
+          git-bug--buffer-id
+          git-bug--buffer-human-id))
+   ((magit-section-value-if 'git-bug-bug-section)
+    (let ((bug (magit-section-value-if 'git-bug-bug-section)))
+      (list (magit-toplevel)
+            (alist-get 'id bug)
+            (alist-get 'human_id bug))))
+   (t (user-error "No bug at point"))))
+
+(defun git-bug--add-comment (repo id body)
+  "Add BODY as a comment to bug ID in REPO."
+  (git-bug--call-with-input
+   repo body "bug" "comment" "new" id "--non-interactive" "-F" "-"))
+
+(defun git-bug--set-labels (repo id labels)
+  "Set the labels of bug ID in REPO to LABELS."
+  (let* ((detail (git-bug--detail repo id))
+         (current (alist-get 'labels detail))
+         (added (cl-set-difference labels current :test #'equal))
+         (removed (cl-set-difference current labels :test #'equal)))
+    (when added
+      (apply #'git-bug--call repo "bug" "label" "new" id added))
+    (when removed
+      (apply #'git-bug--call repo "bug" "label" "rm" id removed))))
+
+(defun git-bug--after-bug-change (repo human-id)
+  "Refresh the status section and viewer buffer after a write to REPO."
+  (git-bug--refresh-after-write repo)
+  (when-let* ((buffer (get-buffer (format "*git-bug: %s*" human-id)))
+              ((buffer-live-p buffer)))
+    (with-current-buffer buffer
+      (when (derived-mode-p 'git-bug-mode)
+        (git-bug-refresh-buffer)))))
+
+;;;###autoload
+(defun git-bug-add-comment-at-point ()
+  "Add a comment to the bug at point."
+  (interactive)
+  (pcase-let ((`(,repo ,id ,human) (git-bug--current-bug)))
+    (git-bug--compose
+     (format "Comment on %s" human)
+     ""
+     (lambda (body)
+       (git-bug--add-comment repo id body)
+       (git-bug--after-bug-change repo human)))))
+
+;;;###autoload
+(defun git-bug-edit-labels-at-point ()
+  "Edit the labels of the bug at point."
+  (interactive)
+  (pcase-let ((`(,repo ,id ,human) (git-bug--current-bug)))
+    (let* ((detail (git-bug--detail repo id))
+           (current (git-bug--sorted-labels
+                     (copy-sequence (alist-get 'labels detail))))
+           (value (completing-read-multiple
+                   "Labels: " nil nil nil
+                   (string-join current ","))))
+      (git-bug--set-labels
+       repo id
+       (cl-remove-if #'string-empty-p
+                     (mapcar #'string-trim value)))
+      (git-bug--after-bug-change repo human))))
 
 (defun git-bug--insert-bug (repo bug)
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
@@ -601,6 +661,18 @@ shows the number of listed bugs over the number of all bugs."
         (when (derived-mode-p 'magit-mode)
           (magit-refresh)))
     (user-error "No bug at point")))
+
+(defvar-keymap git-bug-bug-section-map
+  :doc "Keymap for `git-bug-bug-section' headings."
+  "RET" #'git-bug-show-bug-at-point
+  "w"   #'git-bug-copy-id-at-point
+  "x"   #'git-bug-toggle-status-at-point
+  "c"   #'git-bug-add-comment-at-point
+  "l"   #'git-bug-edit-labels-at-point)
+
+(defvar-keymap git-bug-bugs-section-map
+  :doc "Keymap for the Bugs section heading."
+  "n" #'git-bug-new-bug)
 
 (provide 'git-bug)
 

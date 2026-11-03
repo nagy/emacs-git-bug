@@ -177,6 +177,34 @@ DESCRIPTION is the bug body; default to a plain-text one."
       (git-bug--set-status repo id "open")
       (should (equal (alist-get 'status (car (git-bug--list repo))) "open")))))
 
+(ert-deftest git-bug-tests-add-comment ()
+  "Comments go through stdin and appear in the detail."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Broken frobnicator")
+    (let* ((bug (car (git-bug--list repo)))
+           (full (alist-get 'id bug)))
+      (git-bug--add-comment repo full "A new comment.\n")
+      (let* ((detail (git-bug--detail repo full))
+             (comments (alist-get 'comments detail)))
+        (should (= (length comments) 2))
+        (should (equal (alist-get 'message (car (last comments)))
+                       "A new comment."))))))
+
+(ert-deftest git-bug-tests-set-labels ()
+  "Setting labels adds and removes the difference."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Broken frobnicator")
+    (let* ((bug (car (git-bug--list repo)))
+           (full (alist-get 'id bug)))
+      (git-bug--set-labels repo full '("a" "b"))
+      (should (equal (git-bug--sorted-labels
+                      (alist-get 'labels (git-bug--detail repo full)))
+                     '("a" "b")))
+      (git-bug--set-labels repo full '("b" "c"))
+      (should (equal (git-bug--sorted-labels
+                      (alist-get 'labels (git-bug--detail repo full)))
+                     '("b" "c"))))))
+
 (ert-deftest git-bug-tests-detail ()
   "The detail view carries labels, description and comments."
   (git-bug-tests--with-repo repo
@@ -415,13 +443,21 @@ DESCRIPTION is the bug body; default to a plain-text one."
                      "closed")))))
 
 (ert-deftest git-bug-tests-bug-section-keys ()
-  "RET visits a bug, w copies its id, x toggles status."
+  "Bug headings expose view, copy, toggle, comment and label keys."
   (should (eq (lookup-key git-bug-bug-section-map (kbd "RET"))
               #'git-bug-show-bug-at-point))
   (should (eq (lookup-key git-bug-bug-section-map (kbd "w"))
               #'git-bug-copy-id-at-point))
   (should (eq (lookup-key git-bug-bug-section-map (kbd "x"))
-              #'git-bug-toggle-status-at-point)))
+              #'git-bug-toggle-status-at-point))
+  (should (eq (lookup-key git-bug-bug-section-map (kbd "c"))
+              #'git-bug-add-comment-at-point))
+  (should (eq (lookup-key git-bug-bug-section-map (kbd "l"))
+              #'git-bug-edit-labels-at-point))
+  (should (eq (lookup-key git-bug-mode-map (kbd "c"))
+              #'git-bug-add-comment-at-point))
+  (should (eq (lookup-key git-bug-mode-map (kbd "l"))
+              #'git-bug-edit-labels-at-point)))
 
 (ert-deftest git-bug-tests-copy-id-at-point ()
   "The copy command grabs the short id from the section at point."

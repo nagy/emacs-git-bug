@@ -22,6 +22,8 @@ On a bug heading:
 - =RET= opens the bug in a dedicated buffer
 - =w= copies the short id
 - =x= flips the open/closed status
+- =c= adds a comment
+- =l= edits labels
 
 On the =Bugs= heading, =n= creates a bug.  The compose buffer uses
 =C-c C-c= to submit and =C-c C-k= to cancel.
