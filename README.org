@@ -12,34 +12,96 @@ Add the section inserter to the status sections hook:
 (add-hook 'magit-status-sections-hook #'git-bug-insert-status-bugs 100)
 #+end_src
 
-Every bug is a collapsible section; expand it to see its labels,
+The section always shows the listed count over the total count.
+Every bug is a collapsible section; expand it to load labels,
 description and comments.
 Bug bodies are fontified as Markdown with the builtin
 =markdown-ts-mode= when its tree-sitter grammars are installed;
-Markdown markup symbols are then hidden.
-On a bug heading:
+Markdown markup symbols are then hidden and links stay clickable.
 
-- =RET= opens the bug in a dedicated buffer
-- =w= copies the short id
-- =x= flips the open/closed status
-- =c= adds a comment
-- =l= edits labels
+** Keys
 
-On the =Bugs= heading, =n= creates a bug.  The compose buffer uses
-=C-c C-c= to submit and =C-c C-k= to cancel.
+Bug heading:
 
-Which bugs are listed is controlled by =git-bug-status-section-scope=
-(=open=, =closed= or =all=; default =open=).
-The heading always shows the listed count over the total.
+| Key       | Command                              |
+|-----------+--------------------------------------|
+| =RET=     | Open the bug in a dedicated buffer   |
+| =w=       | Copy the short id                    |
+| =W=       | Copy the full id                     |
+| =C-c r=   | Copy =refs/bugs/<full-id>=           |
+| =x=       | Toggle open/closed                   |
+| =c=       | Add a comment                        |
+| =l=       | Edit labels                          |
+
+Bugs heading:
+
+| Key | Command                              |
+|-----+--------------------------------------|
+| =n= | Create a bug                         |
+| =s= | Set scope (open, closed, all)        |
+| =l= | Filter by label                      |
+| =a= | Filter by author                     |
+| =S= | Set sort order                       |
+| =c= | Clear label and author filters       |
+
+Viewer buffer:
+
+| Key | Command              |
+|-----+----------------------|
+| =g= | Refresh              |
+| =x= | Toggle status        |
+| =c= | Add a comment        |
+| =l= | Edit labels          |
+| =w= | Copy short id        |
+| =W= | Copy full id         |
+| =q= | Quit                 |
+
+The compose buffer uses =C-c C-c= to submit and =C-c C-k= to cancel.
+A prefix argument on =w= copies the full id or ref.
+
+** Filtering, sorting and grouping
+
+=git-bug-status-section-scope= selects =open=, =closed= or =all= bugs.
+=git-bug-status-section-label= and
+=git-bug-status-section-author= narrow the list.
+=git-bug-status-section-sort= orders by =edit-time=, =create-time=,
+=title=, =status= or =id=.
+With =git-bug-status-section-group-by-status=, the =all= scope splits
+into Open and Closed groups.
+
+** Performance
+
+The section heading uses only the list JSON.
+Details load lazily on expansion and cache by repository, full id and
+edit time.  An explicit refresh bypasses the cache.
+Subprocesses run with quiet git settings and UTF-8 coding.
+Explicit writes refresh the status section and an open viewer buffer.
 
 * Requirements
 
 - Emacs 31.1
 - Magit 4.0
-- the =git-bug= binary (its path is baked in when built with Nix)
+- =git-bug= 0.11 or newer (its path is baked in when built with Nix)
 - optional: the tree-sitter grammars =markdown= and =markdown-inline=
   (=M-x treesit-install-language-grammar=; for Markdown fontification
   of bug bodies)
+
+* Customization
+
+| Variable                                 | Default   | Purpose                              |
+|------------------------------------------+-----------+--------------------------------------|
+| =git-bug-program=                        | =git-bug= | Executable                           |
+| =git-bug-status-section-scope=           | =open=    | Which statuses to list               |
+| =git-bug-status-section-label=           | =nil=     | Label filter                         |
+| =git-bug-status-section-author=          | =nil=     | Author filter                        |
+| =git-bug-status-section-sort=            | =edit-time= | Sort order                         |
+| =git-bug-status-section-group-by-status= | =nil=     | Group the all scope                  |
+| =git-bug-status-section-show-empty=      | =t=       | Show an empty Bugs section           |
+| =git-bug-status-section-show-errors=     | =t=       | Show an unavailable Bugs section     |
+| =git-bug-status-section-verbose=         | =nil=     | Echo CLI failures                    |
+
+A repository without git-bug refs and without a git-bug cache stays
+untouched.
 
 * Building
 
