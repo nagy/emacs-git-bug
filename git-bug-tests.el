@@ -464,6 +464,22 @@ DESCRIPTION is the bug body; default to a plain-text one."
         (should (eq (get-text-property (1- start) 'invisible) t))
         (should (null (get-text-property start 'invisible)))))))
 
+(ert-deftest git-bug-tests-group-by-status ()
+  "The all scope can split bugs into Open and Closed groups."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Open bug")
+    (let ((closed (git-bug-tests--new-bug repo "Closed bug")))
+      (git-bug--set-status repo closed "close")
+      (let ((git-bug-status-section-scope 'all)
+            (git-bug-status-section-group-by-status t))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (let ((text (buffer-string)))
+            (should (string-match-p "Open (1)" text))
+            (should (string-match-p "Closed (1)" text))
+            (should (string-match-p "Open bug" text))
+            (should (string-match-p "Closed bug" text))))))))
+
 (ert-deftest git-bug-tests-insert-status-bugs-scope ()
   "The scope customizations controls which bugs are rendered."
   (git-bug-tests--with-repo repo

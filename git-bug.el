@@ -90,6 +90,11 @@ all bugs."
   :type 'boolean
   :group 'git-bug)
 
+(defcustom git-bug-status-section-group-by-status nil
+  "Whether to group the all-bugs scope into Open and Closed sections."
+  :type 'boolean
+  :group 'git-bug)
+
 (defcustom git-bug-status-section-sort 'edit-time
   "How `git-bug-insert-status-bugs' sorts bugs."
   :type '(choice (const :tag "Last edited" edit-time)
@@ -117,6 +122,9 @@ Matching is case-insensitive against name, login and human id."
 (defclass git-bug-bug-section (magit-section)
   ((keymap :initform 'git-bug-bug-section-map))
   "Class for a single bug.")
+
+(defclass git-bug-status-group-section (magit-section) ()
+  "Class for an Open or Closed group of bugs.")
 
 (defun git-bug--call (repo &rest args)
   "Run git-bug with ARGS in REPO and return its standard output.
@@ -791,21 +799,36 @@ Git-bug takes the title from the first line of the message."
                             (error-message-string err))
                     'font-lock-face 'error))))))))
 
+(defun git-bug--insert-group (repo label bugs)
+  "Insert a status group named LABEL with BUGS from REPO."
+  (magit-insert-section (git-bug-status-group-section)
+    (magit-insert-heading (format "%s (%d)" label (length bugs)))
+    (dolist (bug bugs)
+      (git-bug--insert-bug repo bug))
+    (insert ?\n)))
+
 (defun git-bug--insert-bugs (repo bugs)
   "Insert the Bugs section for BUGS in REPO.
 Handle a nil BUGS list when `git-bug-status-section-show-empty' is
 non-nil."
-  (let ((shown (git-bug--select
-                (and bugs (git-bug--displayed-bugs bugs))
-                git-bug-status-section-scope)))
+  (let* ((scope git-bug-status-section-scope)
+         (displayed (and bugs (git-bug--displayed-bugs bugs)))
+         (shown (git-bug--select displayed scope)))
     (when (or bugs git-bug-status-section-show-empty)
       (magit-insert-section (git-bug-bugs-section)
         (magit-insert-heading
          (format "Bugs (%d/%d)" (length shown) (length bugs)))
-        (if bugs
-            (dolist (bug shown)
-              (git-bug--insert-bug repo bug))
+        (cond
+         ((null bugs)
           (insert (propertize "No bugs.\n" 'font-lock-face 'magit-dimmed)))
+         ((and git-bug-status-section-group-by-status (eq scope 'all))
+          (dolist (group '(("Open" . open) ("Closed" . closed)))
+            (let ((group-bugs (git-bug--select displayed (cdr group))))
+              (when group-bugs
+                (git-bug--insert-group repo (car group) group-bugs)))))
+         (t
+          (dolist (bug shown)
+            (git-bug--insert-bug repo bug))))
         (insert ?\n)))))
 
 ;;;###autoload
