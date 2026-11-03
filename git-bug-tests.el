@@ -263,10 +263,29 @@ DESCRIPTION is the bug body; default to a plain-text one."
   (git-bug-tests--with-repo repo
     (git-bug-tests--new-bug repo "Broken frobnicator")
     (let ((git-bug-program "false"))
-      (should (null (git-bug--list repo)))
+      (should-error (git-bug--list repo))
       (with-temp-buffer
         (git-bug-insert-status-bugs)
         (should (string-empty-p (buffer-string)))))))
+
+(ert-deftest git-bug-tests-unrelated-repo-is-silent ()
+  "A repository without git-bug state never invokes git-bug."
+  (let* ((repo (file-name-as-directory
+                (make-temp-file "git-bug-tests" t)))
+         (default-directory repo)
+         (called nil))
+    (unwind-protect
+        (progn
+          (git-bug-tests--git "init" "--quiet")
+          (cl-letf (((symbol-function 'git-bug--call)
+                     (lambda (&rest _)
+                       (setq called t)
+                       "[]")))
+            (with-temp-buffer
+              (git-bug-insert-status-bugs)
+              (should (string-empty-p (buffer-string)))))
+          (should-not called))
+      (delete-directory repo t))))
 
 (provide 'git-bug-tests)
 

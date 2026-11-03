@@ -75,6 +75,11 @@ all bugs."
                  (const :tag "All bugs" all))
   :group 'git-bug)
 
+(defcustom git-bug-status-section-verbose nil
+  "Whether to report git-bug failures in the echo area."
+  :type 'boolean
+  :group 'git-bug)
+
 (defvar-keymap git-bug-bug-section-map
   :doc "Keymap for `git-bug-bug-section' headings."
   "RET" #'git-bug-copy-id-at-point
@@ -125,16 +130,30 @@ JSON null becomes nil."
                      :null-object nil
                      :false-object nil))
 
+(defun git-bug--git-dir (repo)
+  "Return the absolute git directory of REPO, or nil."
+  (let ((default-directory (file-name-as-directory repo)))
+    (ignore-errors (magit-git-string "rev-parse" "--absolute-git-dir"))))
+
+(defun git-bug--initialized-p (repo)
+  "Return non-nil when REPO contains git-bug state.
+That means bug refs or a git-bug cache directory exists.  Other
+repositories stay untouched, avoiding cache creation and error
+noise from a global `magit-status-sections-hook' entry."
+  (condition-case nil
+      (let ((default-directory (file-name-as-directory repo)))
+        (or (magit-git-string "for-each-ref" "--count=1" "refs/bugs")
+            (when-let* ((dir (git-bug--git-dir repo)))
+              (file-directory-p (expand-file-name "git-bug" dir)))))
+    (error nil)))
+
 (defun git-bug--list (repo)
   "Return all bugs in REPO as a list of alists.
-Return nil when REPO contains no bugs.  When git-bug fails, show
-the error in the echo area and return nil, so that a broken
-tracker never breaks `magit-status'."
-  (condition-case err
-      (let ((out (git-bug--call repo "bug" "--format" "json")))
-        (unless (string-blank-p out)
-          (git-bug--parse-json out)))
-    (error (message "Git-bug: %s" (error-message-string err)) nil)))
+Return nil when REPO contains no bugs.  Signal an error when
+git-bug fails."
+  (let ((out (git-bug--call repo "bug" "--format" "json")))
+    (unless (string-blank-p out)
+      (git-bug--parse-json out))))
 
 (defun git-bug--select (bugs scope)
   "Return the BUGS matching SCOPE.
@@ -274,14 +293,19 @@ Meant for `magit-status-sections-hook'.  Which bugs are listed is
 controlled by `git-bug-status-section-scope'; the heading always
 shows the number of listed bugs over the number of all bugs."
   (when-let* ((repo (magit-toplevel))
-              (bugs (git-bug--list repo)))
-    (let ((shown (git-bug--select bugs git-bug-status-section-scope)))
-      (magit-insert-section (git-bug-bugs-section)
-        (magit-insert-heading
-         (format "Bugs (%d/%d)" (length shown) (length bugs)))
-        (dolist (bug shown)
-          (git-bug--insert-bug repo bug))
-        (insert ?\n)))))
+              ((git-bug--initialized-p repo)))
+    (condition-case err
+        (when-let* ((bugs (git-bug--list repo)))
+          (let ((shown (git-bug--select bugs git-bug-status-section-scope)))
+            (magit-insert-section (git-bug-bugs-section)
+              (magit-insert-heading
+               (format "Bugs (%d/%d)" (length shown) (length bugs)))
+              (dolist (bug shown)
+                (git-bug--insert-bug repo bug))
+              (insert ?\n))))
+      (error
+       (when git-bug-status-section-verbose
+         (message "Git-bug: %s" (error-message-string err)))))))
 
 ;;;###autoload
 (defun git-bug-copy-id-at-point ()
