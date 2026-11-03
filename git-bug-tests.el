@@ -178,6 +178,28 @@ DESCRIPTION is the bug body; default to a plain-text one."
             (should (string-match-p "(2)" text))
             (should (string-match-p "now" text))))))))
 
+(ert-deftest git-bug-tests-pure-helper-declarations ()
+  "Pure helpers tell the byte compiler about their behavior."
+  (dolist (fn '(git-bug--bug-author-fields
+                git-bug--bug-time
+                git-bug--select
+                git-bug--author-display
+                git-bug--clean-title
+                git-bug--sorted-labels
+                git-bug--comment-count
+                git-bug--all-labels
+                git-bug--all-authors
+                git-bug--bug-edit-time))
+    (should (function-get fn 'pure))
+    (should (function-get fn 'side-effect-free)))
+  (dolist (fn '(git-bug--filter-bugs
+                git-bug--sort-bugs
+                git-bug--displayed-bugs))
+    ;; These read customizable variables, so their result can change
+    ;; without an argument change.
+    (should-not (function-get fn 'pure))
+    (should (function-get fn 'side-effect-free))))
+
 (ert-deftest git-bug-tests-sort-and-filter ()
   "Sorting and filtering operate on the list JSON."
   (let* ((a '((id . "b")

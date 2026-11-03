@@ -218,6 +218,7 @@ when git-bug fails."
 
 (defun git-bug--bug-author-fields (bug)
   "Return the author fields of BUG for filtering."
+  (declare (pure t) (side-effect-free t))
   (let ((author (alist-get 'author bug)))
     (list (alist-get 'name author)
           (alist-get 'login author)
@@ -225,6 +226,7 @@ when git-bug fails."
 
 (defun git-bug--filter-bugs (bugs)
   "Return BUGS matching the label and author filters."
+  (declare (side-effect-free t))
   (cl-remove-if-not
    (lambda (bug)
      (and (or (null git-bug-status-section-label)
@@ -242,10 +244,12 @@ when git-bug fails."
 
 (defun git-bug--bug-time (key bug)
   "Return the timestamp of KEY in BUG, or zero."
+  (declare (pure t) (side-effect-free t))
   (or (alist-get 'timestamp (alist-get key bug)) 0))
 
 (defun git-bug--sort-bugs (bugs)
   "Return BUGS sorted according to `git-bug-status-section-sort'."
+  (declare (side-effect-free t))
   (let ((sorted (copy-sequence bugs)))
     (pcase git-bug-status-section-sort
       ('edit-time
@@ -277,12 +281,14 @@ when git-bug fails."
 
 (defun git-bug--displayed-bugs (bugs)
   "Return BUGS after filtering and sorting."
+  (declare (side-effect-free t))
   (git-bug--sort-bugs (git-bug--filter-bugs bugs)))
 
 (defun git-bug--select (bugs scope)
   "Return the BUGS matching SCOPE.
 BUGS is a list of bug alists as returned by `git-bug--list'.
 SCOPE is one of the symbols `open', `closed' or `all'."
+  (declare (pure t) (side-effect-free t))
   (pcase scope
     ('all bugs)
     ('open (cl-remove-if-not
@@ -397,6 +403,7 @@ signals an error."
   "Return a cons of AUTHOR display text and face.
 AUTHOR is a git-bug actor alist.  Fall back from name to login to
 human id and finally to a literal placeholder."
+  (declare (pure t) (side-effect-free t))
   (let ((name (alist-get 'name author))
         (login (alist-get 'login author))
         (id (alist-get 'human_id author)))
@@ -410,10 +417,12 @@ human id and finally to a literal placeholder."
 
 (defun git-bug--clean-title (title)
   "Return TITLE on one line."
+  (declare (pure t) (side-effect-free t))
   (string-trim (replace-regexp-in-string "[\r\n]+" " " (or title ""))))
 
 (defun git-bug--sorted-labels (labels)
   "Return a sorted copy of LABELS."
+  (declare (pure t) (side-effect-free t))
   (sort (copy-sequence labels) #'string<))
 
 (defun git-bug--insert-detail (detail)
@@ -723,6 +732,7 @@ Git-bug takes the title from the first line of the message."
 
 (defun git-bug--comment-count (bug)
   "Return the number of replies in BUG."
+  (declare (pure t) (side-effect-free t))
   (let ((comments (alist-get 'comments bug)))
     (if (numberp comments) (max 0 (1- comments)) 0)))
 
@@ -770,6 +780,7 @@ Git-bug takes the title from the first line of the message."
 
 (defun git-bug--all-labels (bugs)
   "Return all labels in BUGS, sorted and unique."
+  (declare (pure t) (side-effect-free t))
   (let (labels)
     (dolist (bug bugs)
       (setq labels (append (alist-get 'labels bug) labels)))
@@ -777,6 +788,7 @@ Git-bug takes the title from the first line of the message."
 
 (defun git-bug--all-authors (bugs)
   "Return all author names in BUGS, sorted and unique."
+  (declare (pure t) (side-effect-free t))
   (let (names)
     (dolist (bug bugs)
       (let ((name (car (git-bug--author-display (alist-get 'author bug)))))
@@ -830,6 +842,7 @@ Git-bug takes the title from the first line of the message."
 
 (defun git-bug--bug-edit-time (bug)
   "Return the edit timestamp of BUG."
+  (declare (pure t) (side-effect-free t))
   (alist-get 'timestamp (alist-get 'edit_time bug)))
 
 (defun git-bug--insert-bug (repo bug)
