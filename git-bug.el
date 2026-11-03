@@ -215,7 +215,14 @@ signals an error."
               ;; Activating an embedded mode for a fenced block can
               ;; prompt to install its grammar and discard the whole
               ;; fontification on failure.  Keep bodies in Markdown.
-              (markdown-ts-fontify-code-blocks-natively nil))
+              (markdown-ts-fontify-code-blocks-natively nil)
+              ;; Bug bodies are untrusted.  Do not fetch images, fold
+              ;; headings, or enable editing helpers in this buffer.
+              (markdown-ts-inline-images nil)
+              (markdown-ts-display-remote-inline-images nil)
+              (markdown-ts-default-folding 'show-all)
+              (markdown-ts-enable-code-block-context-mode nil)
+              (markdown-ts-enable-table-mode nil))
           (with-temp-buffer
             (insert string)
             (delay-mode-hooks (markdown-ts-mode))

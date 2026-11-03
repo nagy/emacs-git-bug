@@ -228,6 +228,24 @@ DESCRIPTION is the bug body; default to a plain-text one."
              (lambda (&rest _) '(nil not-found "missing"))))
     (should-not (git-bug--markdown-ts-ready-p))))
 
+(ert-deftest git-bug-tests-markdown-options-sandboxed ()
+  "Untrusted bodies cannot enable images, folding or editing helpers."
+  (let (seen)
+    (cl-letf (((symbol-function 'git-bug--markdown-ts-ready-p)
+               (lambda () t))
+              ((symbol-function 'font-lock-ensure) #'ignore)
+              ((symbol-function 'markdown-ts-mode)
+               (lambda ()
+                 (setq seen (list markdown-ts-hide-markup
+                                  markdown-ts-fontify-code-blocks-natively
+                                  markdown-ts-inline-images
+                                  markdown-ts-display-remote-inline-images
+                                  markdown-ts-default-folding
+                                  markdown-ts-enable-code-block-context-mode
+                                  markdown-ts-enable-table-mode)))))
+      (git-bug--fontify-markdown "text"))
+    (should (equal seen '(t nil nil nil show-all nil nil)))))
+
 (ert-deftest git-bug-tests-insert-markdown-fontification ()
   "Bug bodies are fontified as Markdown when the grammars exist."
   (skip-unless (git-bug--markdown-ts-ready-p))
