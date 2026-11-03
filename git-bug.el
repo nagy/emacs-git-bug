@@ -92,7 +92,8 @@ all bugs."
 
 (defvar-keymap git-bug-bug-section-map
   :doc "Keymap for `git-bug-bug-section' headings."
-  "RET" #'git-bug-copy-id-at-point
+  "RET" #'git-bug-show-bug-at-point
+  "w"   #'git-bug-copy-id-at-point
   "x"   #'git-bug-toggle-status-at-point)
 
 (defclass git-bug-bugs-section (magit-section) ()

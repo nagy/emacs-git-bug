@@ -383,6 +383,15 @@ DESCRIPTION is the bug body; default to a plain-text one."
       (should (equal (alist-get 'status (car (git-bug--list repo)))
                      "closed")))))
 
+(ert-deftest git-bug-tests-bug-section-keys ()
+  "RET visits a bug, w copies its id, x toggles status."
+  (should (eq (lookup-key git-bug-bug-section-map (kbd "RET"))
+              #'git-bug-show-bug-at-point))
+  (should (eq (lookup-key git-bug-bug-section-map (kbd "w"))
+              #'git-bug-copy-id-at-point))
+  (should (eq (lookup-key git-bug-bug-section-map (kbd "x"))
+              #'git-bug-toggle-status-at-point)))
+
 (ert-deftest git-bug-tests-copy-id-at-point ()
   "The copy command grabs the short id from the section at point."
   (git-bug-tests--with-repo repo

@@ -19,7 +19,8 @@ Bug bodies are fontified as Markdown with the builtin
 Markdown markup symbols are then hidden.
 On a bug heading:
 
-- =RET= copies the short id
+- =RET= opens the bug in a dedicated buffer
+- =w= copies the short id
 - =x= flips the open/closed status
 
 Which bugs are listed is controlled by =git-bug-status-section-scope=
