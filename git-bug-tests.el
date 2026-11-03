@@ -564,6 +564,51 @@ DESCRIPTION is the bug body; default to a plain-text one."
   (should (eq (lookup-key git-bug-mode-map (kbd "l"))
               #'git-bug-edit-labels-at-point)))
 
+(ert-deftest git-bug-tests-bugs-section-keys ()
+  "The Bugs heading exposes create, filter and sort commands."
+  (should (eq (lookup-key git-bug-bugs-section-map (kbd "n"))
+              #'git-bug-new-bug))
+  (should (eq (lookup-key git-bug-bugs-section-map (kbd "s"))
+              #'git-bug-set-scope))
+  (should (eq (lookup-key git-bug-bugs-section-map (kbd "l"))
+              #'git-bug-filter-label))
+  (should (eq (lookup-key git-bug-bugs-section-map (kbd "a"))
+              #'git-bug-filter-author))
+  (should (eq (lookup-key git-bug-bugs-section-map (kbd "S"))
+              #'git-bug-set-sort))
+  (should (eq (lookup-key git-bug-bugs-section-map (kbd "c"))
+              #'git-bug-clear-filters)))
+
+(ert-deftest git-bug-tests-new-bug-command ()
+  "The interactive command creates a bug after composition."
+  (git-bug-tests--with-repo repo
+    (cl-letf (((symbol-function 'read-string)
+               (lambda (&rest _) "Command bug"))
+              ((symbol-function 'git-bug--compose)
+               (lambda (_description _initial callback)
+                 (funcall callback "Body from command.\n"))))
+      (git-bug-new-bug))
+    (let ((bug (car (git-bug--list repo))))
+      (should (equal (alist-get 'title bug) "Command bug")))))
+
+(ert-deftest git-bug-tests-edit-labels-command ()
+  "The label command applies a completed label list."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Broken frobnicator"))
+           (bug (car (git-bug--list repo)))
+           (full (alist-get 'id bug)))
+      (cl-letf (((symbol-function 'completing-read-multiple)
+                 (lambda (&rest _) '("x" "y"))))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (goto-char (point-min))
+          (search-forward short)
+          (goto-char (match-beginning 0))
+          (git-bug-edit-labels-at-point)))
+      (should (equal (git-bug--sorted-labels
+                      (alist-get 'labels (git-bug--detail repo full)))
+                     '("x" "y"))))))
+
 (ert-deftest git-bug-tests-copy-id-at-point ()
   "The copy command grabs the short id from the section at point."
   (git-bug-tests--with-repo repo
