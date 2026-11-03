@@ -18,8 +18,9 @@
       treefmt-nix,
       ...
     }:
-    # Date of the last commit as YYYY-MM-DD, folded into the version
-    # string below.  Flake source info gives it as e.g. "20260922133522".
+    # Modification date of the flake source as YYYY-MM-DD, folded
+    # into the version string below.  Flake source info gives it as
+    # e.g. "20260922133522".
     let
       lastModifiedDate = inputs.self.sourceInfo.lastModifiedDate;
       commitDate = "${builtins.substring 0 4 lastModifiedDate}-${
@@ -32,6 +33,8 @@
       systems = [
         "x86_64-linux"
         "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
       ];
 
       perSystem =
@@ -154,11 +157,11 @@
                   # Lint the unpatched sources; the patched copy inside the
                   # built package differs only in one string literal.
                   src = config.packages.git-bug.src;
-                  meta.description = "checkdoc and package-lint for git-bug.el";
+                  meta.description = "checkdoc and package-lint for git-bug";
                 }
                 ''
                   export HOME=$TMPDIR
-                  cp "$src"/git-bug.el .
+                  cp "$src"/git-bug.el "$src"/git-bug-tests.el .
                   # package-lint assumes an online ELPA; offline it cannot
                   # resolve `magit', so register a stub package description
                   # via an advice on `package-initialize' (which resets
@@ -167,7 +170,8 @@
                     --eval '(advice-add (quote package-initialize) :after (lambda (&rest _) (push (cons (quote magit) (list (package-desc-create :name (quote magit) :version (quote (4 0 0)) :reqs nil :kind (quote single) :archive "stub" :summary "stub"))) package-alist)))' \
                     -f package-lint-batch-and-exit git-bug.el
                   # checkdoc always exits zero; gate on its output instead.
-                  lint_log=$(emacs --batch -l checkdoc --eval '(checkdoc-file "git-bug.el")' 2>&1)
+                  lint_log=$(emacs --batch -l checkdoc \
+                    --eval '(progn (checkdoc-file "git-bug.el") (checkdoc-file "git-bug-tests.el"))' 2>&1)
                   if [ -n "$lint_log" ]; then printf '%s\n' "$lint_log"; exit 1; fi
                   touch $out
                 '';

@@ -670,7 +670,7 @@ Git-bug takes the title from the first line of the message."
       (apply #'git-bug--call repo "bug" "label" "rm" id removed))))
 
 (defun git-bug--after-bug-change (repo human-id)
-  "Refresh the status section and viewer buffer after a write to REPO."
+  "Refresh the status section and viewer buffer for HUMAN-ID after a write to REPO."
   (git-bug--refresh-after-write repo)
   (when-let* ((buffer (get-buffer (format "*git-bug: %s*" human-id)))
               ((buffer-live-p buffer)))
@@ -763,12 +763,12 @@ Git-bug takes the title from the first line of the message."
 
 (defun git-bug--all-authors (bugs)
   "Return all author names in BUGS, sorted and unique."
-  (let (authors)
+  (let (names)
     (dolist (bug bugs)
       (let ((name (car (git-bug--author-display (alist-get 'author bug)))))
         (unless (equal name "unknown")
-          (push name authors))))
-    (sort (delete-dups authors) #'string<)))
+          (push name names))))
+    (sort (delete-dups names) #'string<)))
 
 (defun git-bug-filter-label (&optional clear)
   "Filter bugs by label, or clear the filter with prefix CLEAR."
@@ -928,8 +928,8 @@ KIND is `short', `full' or `ref'."
 ;;;###autoload
 (defun git-bug-copy-id-at-point (&optional arg)
   "Copy the short id of the bug at point.
-With one prefix argument copy the full id.  With two prefix
-arguments copy the bug ref."
+With one prefix ARG copy the full id.  With two prefix arguments
+copy the bug ref."
   (interactive "P")
   (git-bug--copy-reference
    (cond ((equal arg '(16)) 'ref)

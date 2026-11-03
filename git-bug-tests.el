@@ -404,14 +404,14 @@ DESCRIPTION is the bug body; default to a plain-text one."
   (git-bug-tests--with-repo repo
     (git-bug-tests--new-bug repo "Broken frobnicator")
     (cl-letf (((symbol-function 'git-bug--detail)
-               (lambda (&rest _) (error "boom"))))
+               (lambda (&rest _) (error "Boom"))))
       (with-temp-buffer
         (git-bug-insert-status-bugs)
         (goto-char (point-min))
         (search-forward "Broken frobnicator")
         (goto-char (match-beginning 0))
         (magit-section-show (magit-current-section))
-        (should (string-match-p "Details unavailable: boom"
+        (should (string-match-p "Details unavailable: Boom"
                                 (buffer-string)))))))
 
 (ert-deftest git-bug-tests-insert-status-faces ()
