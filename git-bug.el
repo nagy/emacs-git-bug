@@ -90,6 +90,26 @@ all bugs."
   :type 'boolean
   :group 'git-bug)
 
+(defcustom git-bug-status-section-sort 'edit-time
+  "How `git-bug-insert-status-bugs' sorts bugs."
+  :type '(choice (const :tag "Last edited" edit-time)
+                 (const :tag "Created" create-time)
+                 (const :tag "Title" title)
+                 (const :tag "Status" status)
+                 (const :tag "Id" id))
+  :group 'git-bug)
+
+(defcustom git-bug-status-section-label nil
+  "Only list bugs with this label, or nil for any label."
+  :type '(choice (const :tag "Any label" nil) string)
+  :group 'git-bug)
+
+(defcustom git-bug-status-section-author nil
+  "Only list bugs whose author matches this string, or nil.
+Matching is case-insensitive against name, login and human id."
+  :type '(choice (const :tag "Any author" nil) string)
+  :group 'git-bug)
+
 (defclass git-bug-bugs-section (magit-section)
   ((keymap :initform 'git-bug-bugs-section-map))
   "Class for the section listing the bugs of a repository.")
@@ -174,6 +194,67 @@ git-bug fails."
   (let ((out (git-bug--call repo "bug" "--format" "json")))
     (unless (string-blank-p out)
       (git-bug--parse-json out))))
+
+(defun git-bug--bug-author-fields (bug)
+  "Return the author fields of BUG for filtering."
+  (let ((author (alist-get 'author bug)))
+    (list (alist-get 'name author)
+          (alist-get 'login author)
+          (alist-get 'human_id author))))
+
+(defun git-bug--filter-bugs (bugs)
+  "Return BUGS matching the label and author filters."
+  (cl-remove-if-not
+   (lambda (bug)
+     (and (or (null git-bug-status-section-label)
+              (member git-bug-status-section-label
+                      (alist-get 'labels bug)))
+          (or (null git-bug-status-section-author)
+              (let ((needle (downcase git-bug-status-section-author)))
+                (cl-some (lambda (field)
+                           (and (stringp field)
+                                (string-match-p
+                                 (regexp-quote needle)
+                                 (downcase field))))
+                         (git-bug--bug-author-fields bug))))))
+   bugs))
+
+(defun git-bug--bug-time (key bug)
+  "Return the timestamp of KEY in BUG, or zero."
+  (or (alist-get 'timestamp (alist-get key bug)) 0))
+
+(defun git-bug--sort-bugs (bugs)
+  "Return BUGS sorted according to `git-bug-status-section-sort'."
+  (let ((sorted (copy-sequence bugs)))
+    (pcase git-bug-status-section-sort
+      ('edit-time
+       (sort sorted (lambda (a b)
+                      (> (git-bug--bug-time 'edit_time a)
+                         (git-bug--bug-time 'edit_time b)))))
+      ('create-time
+       (sort sorted (lambda (a b)
+                      (> (git-bug--bug-time 'create_time a)
+                         (git-bug--bug-time 'create_time b)))))
+      ('title
+       (sort sorted (lambda (a b)
+                      (string-lessp
+                       (downcase (or (alist-get 'title a) ""))
+                       (downcase (or (alist-get 'title b) ""))))))
+      ('status
+       (sort sorted (lambda (a b)
+                      (or (string-lessp (or (alist-get 'status a) "")
+                                        (or (alist-get 'status b) ""))
+                          (> (git-bug--bug-time 'edit_time a)
+                             (git-bug--bug-time 'edit_time b))))))
+      ('id
+       (sort sorted (lambda (a b)
+                      (string-lessp (or (alist-get 'id a) "")
+                                    (or (alist-get 'id b) "")))))
+      (_ sorted))))
+
+(defun git-bug--displayed-bugs (bugs)
+  "Return BUGS after filtering and sorting."
+  (git-bug--sort-bugs (git-bug--filter-bugs bugs)))
 
 (defun git-bug--select (bugs scope)
   "Return the BUGS matching SCOPE.
@@ -604,6 +685,82 @@ Git-bug takes the title from the first line of the message."
             (when (not (string-empty-p age))
               (concat " " (propertize age 'font-lock-face 'magit-dimmed))))))
 
+(defun git-bug--refresh-current-status ()
+  "Refresh the Magit status buffer associated with the current context."
+  (cond ((derived-mode-p 'magit-mode)
+         (magit-refresh))
+        ((ignore-errors (magit-toplevel))
+         (git-bug--refresh-after-write (magit-toplevel)))))
+
+(defun git-bug-set-scope ()
+  "Set `git-bug-status-section-scope' interactively."
+  (interactive)
+  (setq git-bug-status-section-scope
+        (intern (completing-read
+                 "Bug scope: " '("open" "closed" "all") nil t nil nil
+                 (symbol-name git-bug-status-section-scope))))
+  (git-bug--refresh-current-status))
+
+(defun git-bug--all-labels (bugs)
+  "Return all labels in BUGS, sorted and unique."
+  (let (labels)
+    (dolist (bug bugs)
+      (setq labels (append (alist-get 'labels bug) labels)))
+    (sort (delete-dups labels) #'string<)))
+
+(defun git-bug--all-authors (bugs)
+  "Return all author names in BUGS, sorted and unique."
+  (let (authors)
+    (dolist (bug bugs)
+      (let ((name (car (git-bug--author-display (alist-get 'author bug)))))
+        (unless (equal name "unknown")
+          (push name authors))))
+    (sort (delete-dups authors) #'string<)))
+
+(defun git-bug-filter-label (&optional clear)
+  "Filter bugs by label, or clear the filter with prefix CLEAR."
+  (interactive "P")
+  (if clear
+      (setq git-bug-status-section-label nil)
+    (let* ((bugs (git-bug--list (magit-toplevel)))
+           (value (completing-read
+                   "Label: " (git-bug--all-labels bugs) nil nil nil nil
+                   git-bug-status-section-label)))
+      (setq git-bug-status-section-label
+            (if (string-empty-p value) nil value))))
+  (git-bug--refresh-current-status))
+
+(defun git-bug-filter-author (&optional clear)
+  "Filter bugs by author, or clear the filter with prefix CLEAR."
+  (interactive "P")
+  (if clear
+      (setq git-bug-status-section-author nil)
+    (let* ((bugs (git-bug--list (magit-toplevel)))
+           (value (completing-read
+                   "Author: " (git-bug--all-authors bugs) nil nil nil nil
+                   git-bug-status-section-author)))
+      (setq git-bug-status-section-author
+            (if (string-empty-p value) nil value))))
+  (git-bug--refresh-current-status))
+
+(defun git-bug-set-sort ()
+  "Set `git-bug-status-section-sort' interactively."
+  (interactive)
+  (setq git-bug-status-section-sort
+        (intern (completing-read
+                 "Sort bugs by: "
+                 '("edit-time" "create-time" "title" "status" "id")
+                 nil t nil nil
+                 (symbol-name git-bug-status-section-sort))))
+  (git-bug--refresh-current-status))
+
+(defun git-bug-clear-filters ()
+  "Clear label and author filters."
+  (interactive)
+  (setq git-bug-status-section-label nil
+        git-bug-status-section-author nil)
+  (git-bug--refresh-current-status))
+
 (defun git-bug--insert-bug (repo bug)
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
   (magit-insert-section (git-bug-bug-section bug 'hide)
@@ -638,7 +795,9 @@ Git-bug takes the title from the first line of the message."
   "Insert the Bugs section for BUGS in REPO.
 Handle a nil BUGS list when `git-bug-status-section-show-empty' is
 non-nil."
-  (let ((shown (git-bug--select bugs git-bug-status-section-scope)))
+  (let ((shown (git-bug--select
+                (and bugs (git-bug--displayed-bugs bugs))
+                git-bug-status-section-scope)))
     (when (or bugs git-bug-status-section-show-empty)
       (magit-insert-section (git-bug-bugs-section)
         (magit-insert-heading
@@ -705,7 +864,12 @@ shows the number of listed bugs over the number of all bugs."
 
 (defvar-keymap git-bug-bugs-section-map
   :doc "Keymap for the Bugs section heading."
-  "n" #'git-bug-new-bug)
+  "n" #'git-bug-new-bug
+  "s" #'git-bug-set-scope
+  "l" #'git-bug-filter-label
+  "a" #'git-bug-filter-author
+  "S" #'git-bug-set-sort
+  "c" #'git-bug-clear-filters)
 
 (provide 'git-bug)
 
