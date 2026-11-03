@@ -274,6 +274,22 @@ DESCRIPTION is the bug body; default to a plain-text one."
                       (alist-get 'labels (git-bug--detail repo full)))
                      '("b" "c"))))))
 
+(ert-deftest git-bug-tests-detail-cache ()
+  "Details cache per edit time and honor a force fetch."
+  (clrhash git-bug--detail-cache)
+  (let ((calls 0))
+    (cl-letf (((symbol-function 'git-bug--fetch-detail)
+               (lambda (&rest _)
+                 (cl-incf calls)
+                 '((id . "x")))))
+      (git-bug--detail "/repo" "x" 10)
+      (git-bug--detail "/repo" "x" 10)
+      (should (= calls 1))
+      (git-bug--detail "/repo" "x" 11)
+      (should (= calls 2))
+      (git-bug--detail "/repo" "x" 10 t)
+      (should (= calls 3)))))
+
 (ert-deftest git-bug-tests-detail ()
   "The detail view carries labels, description and comments."
   (git-bug-tests--with-repo repo

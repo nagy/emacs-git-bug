@@ -278,13 +278,33 @@ SCOPE is one of the symbols `open', `closed' or `all'."
               bugs))
     (_ (error "Invalid bug scope: %S" scope))))
 
-(defun git-bug--detail (repo id)
+(defvar git-bug--detail-cache (make-hash-table :test #'equal)
+  "Cache of bug details keyed by repo, id and edit time.")
+
+(defconst git-bug--detail-cache-limit 500
+  "Maximum number of entries in `git-bug--detail-cache'.")
+
+(defun git-bug--fetch-detail (repo id)
+  "Fetch the full bug ID in REPO as an alist."
+  (git-bug--parse-json
+   (git-bug--call repo "bug" "show" id "--format" "json")))
+
+(defun git-bug--detail (repo id &optional edit-time force)
   "Return the full bug ID in REPO as an alist.
 Unlike the entries returned by `git-bug--list', the result includes
 the labels and the comments; comment number zero is the bug
-description."
-  (git-bug--parse-json
-   (git-bug--call repo "bug" "show" id "--format" "json")))
+description.  Cache the result when EDIT-TIME is non-nil, unless
+FORCE is non-nil."
+  (let ((key (list repo id edit-time)))
+    (if (and edit-time (not force))
+        (or (gethash key git-bug--detail-cache)
+            (progn
+              (when (>= (hash-table-count git-bug--detail-cache)
+                        git-bug--detail-cache-limit)
+                (clrhash git-bug--detail-cache))
+              (puthash key (git-bug--fetch-detail repo id)
+                       git-bug--detail-cache)))
+      (git-bug--fetch-detail repo id))))
 
 (defun git-bug--set-status (repo id status)
   "Set the status of bug ID in REPO to STATUS.
@@ -450,6 +470,9 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
 (defvar-local git-bug--buffer-status nil
   "Status of the bug shown in this buffer.")
 
+(defvar-local git-bug--buffer-edit-time nil
+  "Edit timestamp of the bug shown in this buffer.")
+
 (defvar-keymap git-bug-mode-map
   :doc "Keymap for `git-bug-mode'."
   :parent special-mode-map
@@ -467,13 +490,19 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
   (setq-local buffer-read-only t)
   (visual-line-mode 1))
 
-(defun git-bug-refresh-buffer ()
-  "Refresh the current `git-bug-mode' buffer from git-bug."
-  (interactive)
+(defun git-bug-refresh-buffer (&optional force)
+  "Refresh the current `git-bug-mode' buffer from git-bug.
+With FORCE, ignore the detail cache."
+  (interactive "P")
   (unless (derived-mode-p 'git-bug-mode)
     (user-error "Not a git-bug buffer"))
-  (let ((detail (git-bug--detail git-bug--buffer-repo git-bug--buffer-id)))
+  (let ((detail (git-bug--detail git-bug--buffer-repo
+                                 git-bug--buffer-id
+                                 git-bug--buffer-edit-time
+                                 force)))
     (setq-local git-bug--buffer-status (alist-get 'status detail))
+    (setq-local git-bug--buffer-edit-time
+                (alist-get 'timestamp (alist-get 'edit_time detail)))
     (let ((inhibit-read-only t))
       (erase-buffer)
       (git-bug--insert-bug-buffer detail)
@@ -489,7 +518,7 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
                        (if (equal git-bug--buffer-status "open")
                            "close"
                          "open"))
-  (git-bug-refresh-buffer))
+  (git-bug-refresh-buffer t))
 
 (defun git-bug-show-bug (repo bug)
   "Show BUG from REPO in a dedicated `git-bug-mode' buffer."
@@ -501,7 +530,8 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
       (git-bug-mode)
       (setq-local git-bug--buffer-repo repo
                   git-bug--buffer-id id
-                  git-bug--buffer-human-id human)
+                  git-bug--buffer-human-id human
+                  git-bug--buffer-edit-time (git-bug--bug-edit-time bug))
       (git-bug-refresh-buffer))
     (pop-to-buffer buffer)))
 
@@ -634,7 +664,7 @@ Git-bug takes the title from the first line of the message."
               ((buffer-live-p buffer)))
     (with-current-buffer buffer
       (when (derived-mode-p 'git-bug-mode)
-        (git-bug-refresh-buffer)))))
+        (git-bug-refresh-buffer t)))))
 
 ;;;###autoload
 (defun git-bug-add-comment-at-point ()
@@ -772,6 +802,10 @@ Git-bug takes the title from the first line of the message."
         git-bug-status-section-author nil)
   (git-bug--refresh-current-status))
 
+(defun git-bug--bug-edit-time (bug)
+  "Return the edit timestamp of BUG."
+  (alist-get 'timestamp (alist-get 'edit_time bug)))
+
 (defun git-bug--insert-bug (repo bug)
   "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
   (magit-insert-section (git-bug-bug-section bug 'hide)
@@ -795,7 +829,8 @@ Git-bug takes the title from the first line of the message."
       ;; Fetching details for every collapsed bug blocks `magit-status'.
       (magit-insert-section-body
         (condition-case err
-            (git-bug--insert-detail (git-bug--detail repo bug-id))
+            (git-bug--insert-detail
+             (git-bug--detail repo bug-id (git-bug--bug-edit-time bug)))
           (error
            (insert (propertize
                     (format "Details unavailable: %s\n"
