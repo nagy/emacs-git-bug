@@ -201,6 +201,37 @@ DESCRIPTION is the bug body; default to a plain-text one."
           (git-bug-toggle-status-at-point)))
       (should (equal seen-status full)))))
 
+(ert-deftest git-bug-tests-detail-author-fallback ()
+  "Missing author data renders a placeholder, not an error."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Broken frobnicator")
+    (cl-letf (((symbol-function 'git-bug--detail)
+               (lambda (&rest _)
+                 '((comments . (((author . nil) (message . "Description"))
+                                ((author . nil) (message . "Reply"))))))))
+      (with-temp-buffer
+        (git-bug-insert-status-bugs)
+        (goto-char (point-min))
+        (search-forward "Broken frobnicator")
+        (goto-char (match-beginning 0))
+        (magit-section-show (magit-current-section))
+        (should (string-match-p "#1 unknown:" (buffer-string)))))))
+
+(ert-deftest git-bug-tests-detail-error-visible ()
+  "A failed detail fetch tells the user instead of staying blank."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Broken frobnicator")
+    (cl-letf (((symbol-function 'git-bug--detail)
+               (lambda (&rest _) (error "boom"))))
+      (with-temp-buffer
+        (git-bug-insert-status-bugs)
+        (goto-char (point-min))
+        (search-forward "Broken frobnicator")
+        (goto-char (match-beginning 0))
+        (magit-section-show (magit-current-section))
+        (should (string-match-p "Details unavailable: boom"
+                                (buffer-string)))))))
+
 (ert-deftest git-bug-tests-insert-status-faces ()
   "The bug id is fontified and survives font-lock refontification."
   (git-bug-tests--with-repo repo

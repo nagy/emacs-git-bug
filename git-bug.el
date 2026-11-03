@@ -243,6 +243,21 @@ signals an error."
               out)))
       (error string))))
 
+(defun git-bug--author-display (author)
+  "Return a cons of AUTHOR display text and face.
+AUTHOR is a git-bug actor alist.  Fall back from name to login to
+human id and finally to a literal placeholder."
+  (let ((name (alist-get 'name author))
+        (login (alist-get 'login author))
+        (id (alist-get 'human_id author)))
+    (cond ((and (stringp name) (not (string-empty-p name)))
+           (cons name 'magit-dimmed))
+          ((and (stringp login) (not (string-empty-p login)))
+           (cons login 'magit-dimmed))
+          ((and (stringp id) (not (string-empty-p id)))
+           (cons id 'magit-hash))
+          (t (cons "unknown" 'magit-hash)))))
+
 (defun git-bug--insert-detail (detail)
   "Insert the labels, description and comments of DETAIL.
 DETAIL is a bug alist as returned by `git-bug--detail'."
@@ -258,12 +273,10 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
      for comment in (cdr comments)
      for n from 1
      for author = (alist-get 'author comment)
-     for name = (alist-get 'name author)
+     for display = (git-bug--author-display author)
      do (insert "\n")
         (insert (propertize (format "#%d " n) 'font-lock-face 'magit-dimmed)
-                (propertize (or name (alist-get 'human_id author))
-                            'font-lock-face
-                            (if name 'magit-dimmed 'magit-hash))
+                (propertize (car display) 'font-lock-face (cdr display))
                 (propertize ":" 'font-lock-face 'magit-dimmed))
         (insert "\n")
         (insert (git-bug--fontify-markdown (alist-get 'message comment))
@@ -289,10 +302,13 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
       ;; Magit runs this body only when the user expands the section.
       ;; Fetching details for every collapsed bug blocks `magit-status'.
       (magit-insert-section-body
-        (when-let* ((detail (condition-case nil
-                                (git-bug--detail repo bug-id)
-                              (error nil))))
-          (git-bug--insert-detail detail))))))
+        (condition-case err
+            (git-bug--insert-detail (git-bug--detail repo bug-id))
+          (error
+           (insert (propertize
+                    (format "Details unavailable: %s\n"
+                            (error-message-string err))
+                    'font-lock-face 'error))))))))
 
 ;;;###autoload
 (defun git-bug-insert-status-bugs ()
