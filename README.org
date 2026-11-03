@@ -45,6 +45,13 @@ nix fmt            # format via treefmt
 
 The ERT suite drives the real =git-bug= binary inside throwaway
 repositories, so =git= and =git-bug= are needed during the build.
-The dev shell exports =MARKDOWN_GRAMMARS= with the tree-sitter
-grammars for Markdown fontification; add it to
-=treesit-extra-load-path= for interactive testing.
+The dev shell provides Emacs with Magit and exports
+=MARKDOWN_GRAMMARS= with the tree-sitter grammars for Markdown
+fontification.  For ad-hoc tests:
+
+#+begin_src sh
+nix develop
+emacs -Q --batch -L . \
+  --eval '(setq treesit-extra-load-path (list (getenv "MARKDOWN_GRAMMARS")))' \
+  -l git-bug-tests.el -f ert-run-tests-batch-and-exit
+#+end_src

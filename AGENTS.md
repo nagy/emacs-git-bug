@@ -9,7 +9,8 @@ section into `magit-status` via `magit-status-sections-hook`.
   suite + checkdoc + package-lint.  Meaningful gate; run before done.
 - `nix build` — the melpaBuild package (runs the ERT suite too).
 - `nix fmt` — treefmt/nixfmt; never run formatters standalone.
-- Ad-hoc test run: `emacs -Q --batch -L . -l git-bug-tests.el -f ert-run-tests-batch-and-exit`
+- Ad-hoc test run inside `nix develop`:
+  `emacs -Q --batch -L . --eval '(setq treesit-extra-load-path (list (getenv "MARKDOWN_GRAMMARS")))' -l git-bug-tests.el -f ert-run-tests-batch-and-exit`
   (needs `git` and `git-bug` on PATH).
 
 ## Layout

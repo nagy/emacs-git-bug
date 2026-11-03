@@ -180,7 +180,9 @@
           # fontification; add it to `treesit-extra-load-path'.
           devShells.default = pkgs.mkShell {
             packages = [
-              pkgs.emacs
+              # `emacsWithPackages' sets EMACSLOADPATH, so `emacs -Q'
+              # can load Magit and its dependencies for ad-hoc tests.
+              (pkgs.emacsPackages.emacsWithPackages (p: [ p.magit ]))
               pkgs.git
               pkgs.git-bug
             ];
