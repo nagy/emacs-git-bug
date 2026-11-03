@@ -124,6 +124,15 @@ DESCRIPTION is the bug body; default to a plain-text one."
         (should (equal (alist-get 'message (cadr comments))
                        "A comment body."))))))
 
+(ert-deftest git-bug-tests-fontify-unknown-code-language ()
+  "A fenced block without its grammar does not stop Markdown faces."
+  (skip-unless (git-bug--markdown-ts-ready-p))
+  (let* ((text "Text with **bold** word.\n\n```python\nprint(1)\n```\n")
+         (out (git-bug--fontify-markdown text))
+         (pos (string-match "bold" out)))
+    (should (memq 'markdown-ts-bold
+                  (ensure-list (get-text-property pos 'font-lock-face out))))))
+
 (ert-deftest git-bug-tests-insert-status-bugs ()
   "The status section renders headings and hidden details."
   (git-bug-tests--with-repo repo

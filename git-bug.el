@@ -192,7 +192,11 @@ signals an error."
   (if (not (git-bug--markdown-ts-ready-p))
       string
     (condition-case nil
-        (let ((markdown-ts-hide-markup t))
+        (let ((markdown-ts-hide-markup t)
+              ;; Activating an embedded mode for a fenced block can
+              ;; prompt to install its grammar and discard the whole
+              ;; fontification on failure.  Keep bodies in Markdown.
+              (markdown-ts-fontify-code-blocks-natively nil))
           (with-temp-buffer
             (insert string)
             (delay-mode-hooks (markdown-ts-mode))
