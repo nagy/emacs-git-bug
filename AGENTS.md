@@ -19,7 +19,9 @@ section into `magit-status` via `magit-status-sections-hook`.
   viewer and compose modes).
 - `git-bug-tests.el` — ERT suite; each test drives the real `git-bug`
   binary in a throwaway repo.
-- `flake.nix` — everything Nix: melpaBuild with `substituteInPlace`
+- `flake.nix` — everything Nix: an overridable package built with
+  `lib.makeOverridable` (`emacs`, `emacsPackages`, `melpaBuild`,
+  `markdownGrammars`, `version` arguments), `substituteInPlace`
   patching `git-bug-program` to the `pkgs.git-bug` store path,
   checks, devShell, treefmt.  The dev shell provides Magit and the
   tree-sitter `markdown`/`markdown-inline` grammars (renamed
