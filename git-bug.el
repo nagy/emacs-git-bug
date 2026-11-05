@@ -78,22 +78,22 @@ all bugs."
   :group 'git-bug)
 
 (defcustom git-bug-status-section-verbose nil
-  "Whether to report git-bug failures in the echo area."
+  "When non-nil, report git-bug failures in the echo area."
   :type 'boolean
   :group 'git-bug)
 
 (defcustom git-bug-status-section-show-empty t
-  "Whether to show the Bugs section in a repository without bugs."
+  "When non-nil, show the Bugs section in a repository without bugs."
   :type 'boolean
   :group 'git-bug)
 
 (defcustom git-bug-status-section-show-errors t
-  "Whether to show the Bugs section when git-bug fails."
+  "When non-nil, show the Bugs section when git-bug fails."
   :type 'boolean
   :group 'git-bug)
 
 (defcustom git-bug-status-section-group-by-status nil
-  "Whether to group the all-bugs scope into Open and Closed sections."
+  "When non-nil, group the all-bugs scope into Open and Closed sections."
   :type 'boolean
   :group 'git-bug)
 
@@ -107,12 +107,12 @@ all bugs."
   :group 'git-bug)
 
 (defcustom git-bug-status-section-label nil
-  "Only list bugs with this label, or nil for any label."
+  "Label that filters the listed bugs, or nil for any label."
   :type '(choice (const :tag "Any label" nil) string)
   :group 'git-bug)
 
 (defcustom git-bug-status-section-author nil
-  "Only list bugs whose author matches this string, or nil.
+  "Author that filters the listed bugs, or nil for any author.
 Matching is case-insensitive against name, login and human id."
   :type '(choice (const :tag "Any author" nil) string)
   :group 'git-bug)
@@ -183,7 +183,7 @@ with a non-zero status."
 
 (defun git-bug--parse-json (string)
   "Parse JSON STRING into Lisp data.
-Objects become alists keyed by symbols, arrays become lists and
+Objects become alists with symbol keys, arrays become lists and
 JSON null becomes nil."
   (json-parse-string string
                      :object-type 'alist
@@ -300,7 +300,7 @@ SCOPE is one of the symbols `open', `closed' or `all'."
     (_ (error "Invalid bug scope: %S" scope))))
 
 (defvar git-bug--detail-cache (make-hash-table :test #'equal)
-  "Cache of bug details keyed by repo, id and edit time.")
+  "Cache of bug details for each repo, id and edit time.")
 
 (defconst git-bug--detail-cache-limit 500
   "Maximum number of entries in `git-bug--detail-cache'.")
@@ -337,7 +337,7 @@ command line."
   "Return non-nil when markdown fontification is available.
 That is the case when the builtin `markdown-ts-mode' exists and
 both of the tree-sitter grammars it needs, `markdown' and
-`markdown-inline', are installed."
+`markdown-inline', exist."
   (and (fboundp 'markdown-ts-mode)
        (treesit-available-p)
        ;; `treesit-language-available-p' with DETAIL returns (nil . DATA)
@@ -351,13 +351,12 @@ Fontification runs STRING through `markdown-ts-mode' in a
 temporary buffer with `markdown-ts-hide-markup' enabled: markup
 symbols (backticks, emphasis markers, ...) get an `invisible'
 property of t, which hides them unconditionally in the target
-buffer.  The `face' properties of the mode are copied to
+buffer.  Copy the `face' properties of the mode to
 `font-lock-face', which refontification does not strip (see
 `font-lock-default-unfontify-region').
 
-Return STRING unchanged when the tree-sitter grammars are not
-installed (see `git-bug--markdown-ts-ready-p') or when the mode
-signals an error."
+Return STRING unchanged when the tree-sitter grammars are absent (see
+`git-bug--markdown-ts-ready-p') or when the mode signals an error."
   (if (not (git-bug--markdown-ts-ready-p))
       string
     (condition-case nil
@@ -427,7 +426,7 @@ human id and finally to a literal placeholder."
 
 (defun git-bug--insert-detail (detail)
   "Insert the labels, description and comments of DETAIL.
-DETAIL is a bug alist as returned by `git-bug--detail'."
+DETAIL is a bug alist, as `git-bug--detail' returns it."
   (when-let* ((labels (alist-get 'labels detail)))
     (insert (propertize
              (format "Labels: %s"
@@ -493,19 +492,19 @@ DETAIL is a bug alist as returned by `git-bug--detail'."
     (git-bug--insert-detail detail)))
 
 (defvar-local git-bug--buffer-repo nil
-  "Repository of the bug shown in this buffer.")
+  "Repository of the bug in this buffer.")
 
 (defvar-local git-bug--buffer-id nil
-  "Full id of the bug shown in this buffer.")
+  "Full id of the bug in this buffer.")
 
 (defvar-local git-bug--buffer-human-id nil
-  "Short id of the bug shown in this buffer.")
+  "Short id of the bug in this buffer.")
 
 (defvar-local git-bug--buffer-status nil
-  "Status of the bug shown in this buffer.")
+  "Status of the bug in this buffer.")
 
 (defvar-local git-bug--buffer-edit-time nil
-  "Edit timestamp of the bug shown in this buffer.")
+  "Edit timestamp of the bug in this buffer.")
 
 (defvar-keymap git-bug-mode-map
   :doc "Keymap for `git-bug-mode'."
@@ -578,7 +577,7 @@ With FORCE, ignore the detail cache."
     (user-error "No bug at point")))
 
 (defvar-local git-bug--compose-callback nil
-  "Function called with the composed text on submit.")
+  "Function that receives the composed text on submit.")
 
 (defvar-keymap git-bug-compose-mode-map
   :doc "Keymap for `git-bug-compose-mode'."
@@ -693,7 +692,7 @@ Git-bug takes the title from the first line of the message."
       (apply #'git-bug--call repo "bug" "label" "rm" id removed))))
 
 (defun git-bug--after-bug-change (repo human-id)
-  "Refresh the status section and viewer buffer for HUMAN-ID after a write to REPO."
+  "Refresh the status section and viewer of HUMAN-ID after a write to REPO."
   (git-bug--refresh-after-write repo)
   (when-let* ((buffer (get-buffer (format "*git-bug: %s*" human-id)))
               ((buffer-live-p buffer)))
@@ -763,7 +762,7 @@ Git-bug takes the title from the first line of the message."
               (concat " " (propertize age 'font-lock-face 'magit-dimmed))))))
 
 (defun git-bug--refresh-current-status ()
-  "Refresh the Magit status buffer associated with the current context."
+  "Refresh the Magit status buffer for the current context."
   (cond ((derived-mode-p 'magit-mode)
          (magit-refresh))
         ((ignore-errors (magit-toplevel))
@@ -911,9 +910,9 @@ non-nil."
 ;;;###autoload
 (defun git-bug-insert-status-bugs ()
   "Insert a section listing the git-bug bugs of the repository.
-Meant for `magit-status-sections-hook'.  Which bugs are listed is
-controlled by `git-bug-status-section-scope'; the heading always
-shows the number of listed bugs over the number of all bugs."
+Use it in `magit-status-sections-hook'.  `git-bug-status-section-scope'
+controls which bugs the section lists; the heading always shows the
+number of listed bugs over the number of all bugs."
   (when-let* ((repo (magit-toplevel))
               ((git-bug--initialized-p repo)))
     (condition-case err

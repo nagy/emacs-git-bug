@@ -35,6 +35,9 @@ section into `magit-status` via `magit-status-sections-hook`.
 - License AGPL-3.0-or-later; keep the full header in every .el file.
 - `turnCompilationWarningToError` stays on; fix warnings, do not silence.
 - Prefix `git-bug-` / `git-bug--`; keep checkdoc and package-lint clean.
+- Docstrings: imperative function summaries, noun-phrase variable
+  summaries, `When non-nil, ...' flag summaries; keep summary lines
+  under 80 columns.
 - Use full bug ids for CLI calls.  Keep `human_id` for display and
   copying.
 - Load details through `magit-insert-section-body`; never run
