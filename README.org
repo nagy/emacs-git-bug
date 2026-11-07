@@ -23,38 +23,38 @@ Markdown markup symbols are then hidden and links stay clickable.
 
 Bug heading:
 
-| Key       | Command                              |
-|-----------+--------------------------------------|
-| =RET=     | Open the bug in a dedicated buffer   |
-| =w=       | Copy the short id                    |
-| =W=       | Copy the full id                     |
-| =C-c r=   | Copy =refs/bugs/<full-id>=           |
-| =x=       | Toggle open/closed                   |
-| =c=       | Add a comment                        |
-| =l=       | Edit labels                          |
+| Key   | Command                            |
+|-------+------------------------------------|
+| =RET=   | Open the bug in a dedicated buffer |
+| =w=     | Copy the short id                  |
+| =W=     | Copy the full id                   |
+| =C-c r= | Copy =refs/bugs/<full-id>=           |
+| =x=     | Toggle open/closed                 |
+| =c=     | Add a comment                      |
+| =l=     | Edit labels                        |
 
 Bugs heading:
 
-| Key | Command                              |
-|-----+--------------------------------------|
-| =n= | Create a bug                         |
-| =s= | Set scope (open, closed, all)        |
-| =l= | Filter by label                      |
-| =a= | Filter by author                     |
-| =S= | Set sort order                       |
-| =c= | Clear label and author filters       |
+| Key | Command                        |
+|-----+--------------------------------|
+| =n=   | Create a bug                   |
+| =s=   | Set scope (open, closed, all)  |
+| =l=   | Filter by label                |
+| =a=   | Filter by author               |
+| =S=   | Set sort order                 |
+| =c=   | Clear label and author filters |
 
 Viewer buffer:
 
-| Key | Command              |
-|-----+----------------------|
-| =g= | Refresh              |
-| =x= | Toggle status        |
-| =c= | Add a comment        |
-| =l= | Edit labels          |
-| =w= | Copy short id        |
-| =W= | Copy full id         |
-| =q= | Quit                 |
+| Key | Command       |
+|-----+---------------|
+| =g=   | Refresh       |
+| =x=   | Toggle status |
+| =c=   | Add a comment |
+| =l=   | Edit labels   |
+| =w=   | Copy short id |
+| =W=   | Copy full id  |
+| =q=   | Quit          |
 
 The compose buffer uses =C-c C-c= to submit and =C-c C-k= to cancel.
 A prefix argument on =w= copies the full id or ref.
@@ -88,17 +88,17 @@ Explicit writes refresh the status section and an open viewer buffer.
 
 * Customization
 
-| Variable                                 | Default   | Purpose                              |
-|------------------------------------------+-----------+--------------------------------------|
-| =git-bug-program=                        | =git-bug= | Executable                           |
-| =git-bug-status-section-scope=           | =open=    | Which statuses to list               |
-| =git-bug-status-section-label=           | =nil=     | Label filter                         |
-| =git-bug-status-section-author=          | =nil=     | Author filter                        |
-| =git-bug-status-section-sort=            | =edit-time= | Sort order                         |
-| =git-bug-status-section-group-by-status= | =nil=     | Group the all scope                  |
-| =git-bug-status-section-show-empty=      | =t=       | Show an empty Bugs section           |
-| =git-bug-status-section-show-errors=     | =t=       | Show an unavailable Bugs section     |
-| =git-bug-status-section-verbose=         | =nil=     | Echo CLI failures                    |
+| Variable                               | Default   | Purpose                          |
+|----------------------------------------+-----------+----------------------------------|
+| =git-bug-program=                        | =git-bug=   | Executable                       |
+| =git-bug-status-section-scope=           | =open=      | Which statuses to list           |
+| =git-bug-status-section-label=           | =nil=       | Label filter                     |
+| =git-bug-status-section-author=          | =nil=       | Author filter                    |
+| =git-bug-status-section-sort=            | =edit-time= | Sort order                       |
+| =git-bug-status-section-group-by-status= | =nil=       | Group the all scope              |
+| =git-bug-status-section-show-empty=      | =t=         | Show an empty Bugs section       |
+| =git-bug-status-section-show-errors=     | =t=         | Show an unavailable Bugs section |
+| =git-bug-status-section-verbose=         | =nil=       | Echo CLI failures                |
 
 A repository without git-bug refs and without a git-bug cache stays
 untouched.
