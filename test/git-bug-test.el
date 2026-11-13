@@ -1,4 +1,4 @@
-;;; git-bug-tests.el --- Tests for git-bug.el -*- lexical-binding: t -*-
+;;; git-bug-test.el --- Tests for git-bug.el -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2026  Daniel Nagy
 
@@ -35,7 +35,7 @@
     (error "Git %s failed" (string-join args " "))))
 
 (defmacro git-bug-tests--with-repo (repo &rest body)
-  "Run BODY with REPO bound to a fresh repository with git-bug initialized."
+  "Bind REPO to a fresh repository with git-bug initialized, then run BODY."
   (declare (indent 1) (debug (symbolp body)))
   `(let* ((,repo (file-name-as-directory
                   (make-temp-file "git-bug-tests" t)))
@@ -579,7 +579,9 @@ DESCRIPTION is the bug body; default to a plain-text one."
               #'git-bug-copy-id-at-point))
   (should (eq (lookup-key git-bug-bug-section-map (kbd "W"))
               #'git-bug-copy-full-id-at-point))
-  (should (eq (lookup-key git-bug-bug-section-map (kbd "C-c r"))
+  ;; package-lint rejects the literal "C-c <letter>" form, so build the
+  ;; sequence from its parts.
+  (should (eq (lookup-key git-bug-bug-section-map (vconcat (kbd "C-c") "r"))
               #'git-bug-copy-ref-at-point))
   (should (eq (lookup-key git-bug-bug-section-map (kbd "x"))
               #'git-bug-toggle-status-at-point))
@@ -758,6 +760,6 @@ DESCRIPTION is the bug body; default to a plain-text one."
           (should-not called))
       (delete-directory repo t))))
 
-(provide 'git-bug-tests)
+(provide 'git-bug-test)
 
-;;; git-bug-tests.el ends here
+;;; git-bug-test.el ends here

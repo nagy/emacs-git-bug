@@ -129,7 +129,7 @@ Matching is case-insensitive against name, login and human id."
   "Class for an Open or Closed group of bugs.")
 
 (defun git-bug--call (repo &rest args)
-  "Run git-bug with ARGS in REPO and return its standard output.
+  "Run git-bug in REPO with ARGS and return its standard output.
 Standard error goes to a temporary file: the split-destination
 form of `process-file' only accepts file names for it, and
 git-bug prints progress noise there anyway.  Signal
@@ -143,7 +143,7 @@ git-bug prints progress noise there anyway.  Signal
               (cons "GIT_PAGER=cat" process-environment))))
 
 (defun git-bug--call-with-input (repo input &rest args)
-  "Run git-bug with ARGS in REPO, feeding INPUT to standard input.
+  "Run git-bug in REPO with INPUT on standard input and ARGS.
 Return standard output.  Signal `git-bug-error' when git-bug exits
 with a non-zero status."
   (let ((stderr (make-temp-file "git-bug-stderr"))
@@ -306,12 +306,12 @@ SCOPE is one of the symbols `open', `closed' or `all'."
   "Maximum number of entries in `git-bug--detail-cache'.")
 
 (defun git-bug--fetch-detail (repo id)
-  "Fetch the full bug ID in REPO as an alist."
+  "Fetch from REPO the full bug ID as an alist."
   (git-bug--parse-json
    (git-bug--call repo "bug" "show" id "--format" "json")))
 
 (defun git-bug--detail (repo id &optional edit-time force)
-  "Return the full bug ID in REPO as an alist.
+  "Return from REPO the full bug ID as an alist.
 Unlike the entries returned by `git-bug--list', the result includes
 the labels and the comments; comment number zero is the bug
 description.  Cache the result when EDIT-TIME is non-nil, unless
@@ -328,7 +328,7 @@ FORCE is non-nil."
       (git-bug--fetch-detail repo id))))
 
 (defun git-bug--set-status (repo id status)
-  "Set the status of bug ID in REPO to STATUS.
+  "Set in REPO the status of bug ID to STATUS.
 STATUS is either \"open\" or \"close\", matching the git-bug
 command line."
   (git-bug--call repo "bug" "status" status id))
@@ -554,7 +554,7 @@ With FORCE, ignore the detail cache."
   (git-bug-refresh-buffer t))
 
 (defun git-bug-show-bug (repo bug)
-  "Show BUG from REPO in a dedicated `git-bug-mode' buffer."
+  "Show REPO's BUG in a dedicated `git-bug-mode' buffer."
   (let* ((id (alist-get 'id bug))
          (human (alist-get 'human_id bug))
          (buffer (get-buffer-create
@@ -676,12 +676,12 @@ Git-bug takes the title from the first line of the message."
    (t (user-error "No bug at point"))))
 
 (defun git-bug--add-comment (repo id body)
-  "Add BODY as a comment to bug ID in REPO."
+  "Add to REPO's bug ID the comment BODY."
   (git-bug--call-with-input
    repo body "bug" "comment" "new" id "--non-interactive" "-F" "-"))
 
 (defun git-bug--set-labels (repo id labels)
-  "Set the labels of bug ID in REPO to LABELS."
+  "Set in REPO the labels of bug ID to LABELS."
   (let* ((detail (git-bug--detail repo id))
          (current (alist-get 'labels detail))
          (added (cl-set-difference labels current :test #'equal))
@@ -692,7 +692,7 @@ Git-bug takes the title from the first line of the message."
       (apply #'git-bug--call repo "bug" "label" "rm" id removed))))
 
 (defun git-bug--after-bug-change (repo human-id)
-  "Refresh the status section and viewer of HUMAN-ID after a write to REPO."
+  "Refresh after a write to REPO the status section and viewer of HUMAN-ID."
   (git-bug--refresh-after-write repo)
   (when-let* ((buffer (get-buffer (format "*git-bug: %s*" human-id)))
               ((buffer-live-p buffer)))
@@ -845,7 +845,7 @@ Git-bug takes the title from the first line of the message."
   (alist-get 'timestamp (alist-get 'edit_time bug)))
 
 (defun git-bug--insert-bug (repo bug)
-  "Insert BUG from REPO as a collapsed `git-bug-bug-section'."
+  "Insert REPO's BUG as a collapsed `git-bug-bug-section'."
   (magit-insert-section (git-bug-bug-section bug 'hide)
     (let ((id (or (alist-get 'human_id bug) ""))
           (bug-id (alist-get 'id bug))
@@ -876,7 +876,7 @@ Git-bug takes the title from the first line of the message."
                     'font-lock-face 'error))))))))
 
 (defun git-bug--insert-group (repo label bugs)
-  "Insert a status group named LABEL with BUGS from REPO."
+  "Insert for REPO a status group named LABEL with BUGS."
   (magit-insert-section (git-bug-status-group-section)
     (magit-insert-heading (format "%s (%d)" label (length bugs)))
     (dolist (bug bugs)
@@ -884,7 +884,7 @@ Git-bug takes the title from the first line of the message."
     (insert ?\n)))
 
 (defun git-bug--insert-bugs (repo bugs)
-  "Insert the Bugs section for BUGS in REPO.
+  "Insert for REPO the Bugs section for BUGS.
 Handle a nil BUGS list when `git-bug-status-section-show-empty' is
 non-nil."
   (let* ((scope git-bug-status-section-scope)
