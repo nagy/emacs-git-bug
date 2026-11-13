@@ -111,20 +111,36 @@
               # exercising the CLI, the parsing and the rendering together.
               checkPhase = ''
                 runHook preCheck
-                export HOME=$TMPDIR
+                # The MELPA recipe stages only the root `*.el' files, so the
+                # test tree must come back from the flake source.  Load it
+                # from `test/' to keep the suite out of the package.
+                cp -r ${./test} ./test
                 # `package-initialize' (as elpa2nix does at install time) is
                 # what puts the packageRequires dependencies on `load-path';
                 # a plain batch Emacs cannot see them otherwise.
-                emacs --batch -L . \
+                emacs --batch -L . -L test \
                   --eval "(require 'package)" \
                   -f package-initialize \
                   --eval '(setq byte-compile-error-on-warn t)' \
-                  -f batch-byte-compile git-bug-tests.el
-                emacs --batch -L . \
+                  -f batch-byte-compile test/*-test.el
+                # Glob loader: a new test file needs no flake edit.  printf
+                # repeats "-l %s" per match.  failglob makes an empty glob a
+                # shell error, and the || guard reports it, because failglob
+                # inside a command substitution aborts only the substitution.
+                shopt -s failglob
+                test_args=$(printf -- "-l %s " test/*-test.el) || {
+                  echo 'no tests matched test/*-test.el' >&2
+                  exit 1
+                }
+                shopt -u failglob
+                # The unquoted $test_args is intentional: the words must
+                # split into -l <file> pairs, safe because test file names
+                # never contain spaces.
+                emacs --batch -L . -L test \
                   --eval "(require 'package)" \
                   -f package-initialize \
                   --eval "(setq treesit-extra-load-path '(\"${markdownGrammars}\"))" \
-                  -l git-bug-tests.elc \
+                  $test_args \
                   -f ert-run-tests-batch-and-exit
                 runHook postCheck
               '';
@@ -132,10 +148,12 @@
               doCheck = true;
 
               # The tests initialize temporary git repositories and run the
-              # git-bug CLI against them.
+              # git-bug CLI against them.  The hook gives Emacs a private
+              # writable home, so checks cannot leak state through $TMPDIR.
               nativeCheckInputs = [
                 pkgs.git
                 markdownGrammars
+                pkgs.writableTmpDirAsHomeHook
               ];
 
               meta = {
@@ -179,6 +197,7 @@
                 {
                   nativeBuildInputs = [
                     (pkgs.emacsPackages.emacsWithPackages (p: [ p.package-lint ]))
+                    pkgs.writableTmpDirAsHomeHook
                   ];
                   # Lint the unpatched sources; the patched copy inside the
                   # built package differs only in one string literal.
@@ -186,18 +205,25 @@
                   meta.description = "checkdoc and package-lint for git-bug";
                 }
                 ''
-                  export HOME=$TMPDIR
-                  cp "$src"/git-bug.el "$src"/git-bug-tests.el .
+                  # `src' is filtered, so copy the whole tree rather than
+                  # listing files: `test/' is part of the lint surface too.
+                  cp -r "$src"/. .
                   # package-lint assumes an online ELPA; offline it cannot
                   # resolve `magit', so register a stub package description
                   # via an advice on `package-initialize' (which resets
                   # `package-alist' on every call, wiping plain pushes).
+                  # `package-lint-main-file' keeps the test files attached to
+                  # the package they test instead of making each its own.
                   emacs --batch -l package-lint \
+                    --eval '(setq package-lint-main-file "git-bug.el")' \
                     --eval '(advice-add (quote package-initialize) :after (lambda (&rest _) (push (cons (quote magit) (list (package-desc-create :name (quote magit) :version (quote (4 0 0)) :reqs nil :kind (quote single) :archive "stub" :summary "stub"))) package-alist)))' \
-                    -f package-lint-batch-and-exit git-bug.el
+                    -f package-lint-batch-and-exit \
+                    *.el test/*.el
                   # checkdoc always exits zero; gate on its output instead.
                   lint_log=$(emacs --batch -l checkdoc \
-                    --eval '(progn (checkdoc-file "git-bug.el") (checkdoc-file "git-bug-tests.el"))' 2>&1)
+                    --eval '(setq checkdoc-arguments-in-order-flag t)' \
+                    --eval '(mapc (lambda (f) (checkdoc-file f)) command-line-args-left)' \
+                    *.el test/*.el 2>&1)
                   if [ -n "$lint_log" ]; then printf '%s\n' "$lint_log"; exit 1; fi
                   touch $out
                 '';

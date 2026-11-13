@@ -10,14 +10,14 @@ section into `magit-status` via `magit-status-sections-hook`.
 - `nix build` — the melpaBuild package (runs the ERT suite too).
 - `nix fmt` — treefmt/nixfmt; never run formatters standalone.
 - Ad-hoc test run inside `nix develop`:
-  `emacs -Q --batch -L . --eval '(setq treesit-extra-load-path (list (getenv "MARKDOWN_GRAMMARS")))' -l git-bug-tests.el -f ert-run-tests-batch-and-exit`
+  `emacs -Q --batch -L . -L test --eval '(setq treesit-extra-load-path (list (getenv "MARKDOWN_GRAMMARS")))' -l test/git-bug-test.el -f ert-run-tests-batch-and-exit`
   (needs `git` and `git-bug` on PATH).
 
 ## Layout
 
 - `git-bug.el` — the package (sections, commands, CLI wrapper,
   viewer and compose modes).
-- `git-bug-tests.el` — ERT suite; each test drives the real `git-bug`
+- `test/git-bug-test.el` — ERT suite; each test drives the real `git-bug`
   binary in a throwaway repo.
 - `flake.nix` — everything Nix: an overridable package built with
   `lib.makeOverridable` (`emacs`, `emacsPackages`, `melpaBuild`,
@@ -35,6 +35,9 @@ section into `magit-status` via `magit-status-sections-hook`.
 - License AGPL-3.0-or-later; keep the full header in every .el file.
 - `turnCompilationWarningToError` stays on; fix warnings, do not silence.
 - Prefix `git-bug-` / `git-bug--`; keep checkdoc and package-lint clean.
+- Tests live in `test/`, one `*-test.el` per source unit.  The
+  `checkPhase` loads them with a `test/*-test.el` glob, so a new test
+  file needs no flake edit.  Lint covers `test/*.el`.
 - Docstrings: imperative function summaries, noun-phrase variable
   summaries, `When non-nil, ...' flag summaries; keep summary lines
   under 80 columns.
