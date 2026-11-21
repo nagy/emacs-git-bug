@@ -21,8 +21,7 @@ License: AGPL-3.0-or-later.
 
 ## Build and test
 
-- `nix flake check` — package (byte-compile, warnings as errors), ERT suite,
-  checkdoc, package-lint. Meaningful gate. Run before done.
+- `nix flake check` — the gate. Run before done.
 - `nix build` — the melpaBuild package. Runs the ERT suite too.
 - `nix fmt` — treefmt and nixfmt. Never run formatters standalone.
 - Ad-hoc run inside `nix develop`:
@@ -31,9 +30,8 @@ License: AGPL-3.0-or-later.
 
 ## Rules
 
-- Keep `turnCompilationWarningToError` on. Fix warnings, do not silence them.
+- Never silence a byte-compile warning. Fix it.
 - Keep the full AGPL-3.0-or-later header in every `.el` file.
-- Keep checkdoc and package-lint clean.
 - Tests live in `test/`, one `*-test.el` per source unit. The `checkPhase` loads
   them with a `test/*-test.el` glob, so a new test file needs no flake edit. Lint
   covers `test/*.el`.
