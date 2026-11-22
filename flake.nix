@@ -83,6 +83,7 @@
             }:
             melpaBuild {
               pname = "git-bug";
+              preferLocalBuild = true;
               inherit version;
 
               # Elisp dependencies from the Package-Requires header.
