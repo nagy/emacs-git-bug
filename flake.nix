@@ -36,7 +36,7 @@
       # "parser" file.
       mkMarkdownGrammars =
         pkgs:
-        pkgs.runCommand "tree-sitter-markdown-grammars" { } ''
+        pkgs.runCommandLocal "tree-sitter-markdown-grammars" { } ''
           mkdir -p $out
           ln -s ${pkgs.tree-sitter-grammars.tree-sitter-markdown}/parser \
             $out/libtree-sitter-markdown.so
@@ -193,7 +193,7 @@
 
             # checkdoc + package-lint: catch what byte-compilation cannot.
             lint =
-              pkgs.runCommand "git-bug-lint"
+              pkgs.runCommandLocal "git-bug-lint"
                 {
                   nativeBuildInputs = [
                     (pkgs.emacsPackages.emacsWithPackages (p: [ p.package-lint ]))
