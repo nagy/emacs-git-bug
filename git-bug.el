@@ -510,7 +510,7 @@ DETAIL is a bug alist, as `git-bug--detail' returns it."
   :doc "Keymap for `git-bug-mode'."
   :parent special-mode-map
   "q" #'quit-window
-  "g" #'git-bug-refresh-buffer
+  "g" #'revert-buffer
   "w" #'git-bug-copy-id-at-point
   "W" #'git-bug-copy-full-id-at-point
   "C-c r" #'git-bug-copy-ref-at-point
@@ -519,9 +519,12 @@ DETAIL is a bug alist, as `git-bug--detail' returns it."
   "l" #'git-bug-edit-labels-at-point)
 
 (define-derived-mode git-bug-mode special-mode "Git-Bug"
-  "Major mode for viewing a single bug."
+  "Major mode for viewing a single bug.
+The buffer reads its text from git-bug rather than from a file, so
+\\[revert-buffer] re-reads the bug from storage."
   :interactive nil
   (setq-local buffer-read-only t)
+  (setq-local revert-buffer-function #'git-bug--revert-buffer)
   (visual-line-mode 1))
 
 (defun git-bug-refresh-buffer (&optional force)
@@ -541,6 +544,12 @@ With FORCE, ignore the detail cache."
       (erase-buffer)
       (git-bug--insert-bug-buffer detail)
       (goto-char (point-min)))))
+
+(defun git-bug--revert-buffer (&rest _arguments)
+  "Re-read the bug of the current buffer from git-bug.
+Ignore ARGUMENTS, as `revert-buffer-function' requires.  Bypass
+the detail cache, because a revert reaches the storage again."
+  (git-bug-refresh-buffer t))
 
 (defun git-bug-toggle-status-in-buffer ()
   "Toggle the status of the bug in the current `git-bug-mode' buffer."

@@ -46,16 +46,18 @@ Bugs heading:
 
 Viewer buffer:
 
-| Key | Command       |
-|-----+---------------|
-| =g=   | Refresh       |
-| =x=   | Toggle status |
-| =c=   | Add a comment |
-| =l=   | Edit labels   |
-| =w=   | Copy short id |
-| =W=   | Copy full id  |
-| =q=   | Quit          |
+| Key | Command                      |
+|-----+------------------------------|
+| =g= | Re-read the bug from storage |
+| =x= | Toggle status                |
+| =c= | Add a comment                |
+| =l= | Edit labels                  |
+| =w= | Copy short id                |
+| =W= | Copy full id                 |
+| =q= | Quit                         |
 
+The viewer buffer reads git-bug storage, not a file, so
+=revert-buffer= and =revert-buffer-quick= re-read the bug as =g= does.
 The compose buffer uses =C-c C-c= to submit and =C-c C-k= to cancel.
 A prefix argument on =w= copies the full id or ref.
 

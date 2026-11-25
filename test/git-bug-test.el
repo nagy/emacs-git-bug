@@ -571,6 +571,33 @@ DESCRIPTION is the bug body; default to a plain-text one."
       (should (equal (alist-get 'status (car (git-bug--list repo)))
                      "closed")))))
 
+(ert-deftest git-bug-tests-revert-buffer ()
+  "A revert re-reads the bug from storage, bypassing the cache."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Broken frobnicator"))
+           (bug (car (git-bug--list repo))))
+      (unwind-protect
+          (progn
+            (git-bug-show-bug repo bug)
+            (let ((buffer (get-buffer (format "*git-bug: %s*" short))))
+              (should buffer)
+              (with-current-buffer buffer
+                (should (eq revert-buffer-function
+                            #'git-bug--revert-buffer))
+                (should (eq (lookup-key git-bug-mode-map (kbd "g"))
+                            #'revert-buffer))
+                (should-not (string-match-p "Late comment"
+                                            (buffer-string)))
+                (git-bug--add-comment repo (alist-get 'id bug)
+                                      "Late comment\n")
+                ;; The detail cache holds the text from before the
+                ;; comment, so only a forced fetch shows it.
+                (revert-buffer-quick)
+                (should (string-match-p "Late comment"
+                                        (buffer-string))))))
+        (when-let* ((buffer (get-buffer (format "*git-bug: %s*" short))))
+          (kill-buffer buffer))))))
+
 (ert-deftest git-bug-tests-bug-section-keys ()
   "Bug headings expose view, copy, toggle, comment and label keys."
   (should (eq (lookup-key git-bug-bug-section-map (kbd "RET"))
