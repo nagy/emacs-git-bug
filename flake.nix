@@ -45,13 +45,15 @@
         '';
     in
     flake-parts.lib.mkFlake { inherit inputs; } {
+      # Formatting goes through treefmt: `nix fmt' runs the configured
+      # programs, and the module adds the `checks.treefmt' gate.
+      imports = [ treefmt-nix.flakeModule ];
+
       # Emacs packages are pure Elisp: no ELF binaries, so evaluate on
-      # every Linux arch (and darwin if the deps exist there).
+      # every Linux arch. Darwin is untested, so it stays out.
       systems = [
         "x86_64-linux"
         "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
       ];
 
       perSystem =
@@ -248,7 +250,9 @@
 
           # `nix fmt' formats the flake via treefmt, never the formatters
           # standalone.
-          formatter = treefmt-nix.lib.mkWrapper pkgs {
+          # treefmt-nix has no Elisp formatter, so this formats the flake
+          # itself.
+          treefmt = {
             projectRootFile = "flake.nix";
             programs.nixfmt.enable = true;
           };
