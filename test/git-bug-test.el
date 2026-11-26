@@ -230,6 +230,115 @@ DESCRIPTION is the bug body; default to a plain-text one."
             (should (= (string-match "Alpha" open-line)
                        (string-match "Bravo" closed-line)))))))))
 
+(defun git-bug-tests--fake-bug (human title status labels replies age)
+  "Return a bug list for the layout tests.
+HUMAN is the short id, TITLE the heading title, STATUS either
+\"open\" or \"closed\", LABELS the label list, REPLIES the number
+of replies and AGE the edit age in seconds."
+  (let ((edited (- (float-time) age)))
+    `((id . ,(concat human (make-string 33 ?0)))
+      (human_id . ,human)
+      (title . ,title)
+      (status . ,status)
+      (labels . ,labels)
+      ;; Git-bug counts the description as comment zero.
+      (comments . ,(1+ replies))
+      (edit_time . ((timestamp . ,edited)))
+      (create_time . ((timestamp . ,edited))))))
+
+(defconst git-bug-tests--layout-mixed
+  (list (git-bug-tests--fake-bug "1a2b3c4" "Short" "open" '("ui") 2 120)
+        (git-bug-tests--fake-bug "5d6e7f8" "A considerably longer bug title"
+                                 "closed" '("core" "urgent") 0 90000)
+        (git-bug-tests--fake-bug "9a0b1c2" "Medium" "open" nil 1 4000)
+        (git-bug-tests--fake-bug "3d4e5f6" "Same width" "open" '("docs") 0 30))
+  "Bugs of mixed status, title length, labels and ages.")
+
+(defconst git-bug-tests--layout-open
+  (list (git-bug-tests--fake-bug "1a2b3c4" "Short" "open" nil 0 90)
+        (git-bug-tests--fake-bug "5d6e7f8" "A considerably longer bug title"
+                                 "open" nil 0 7200)
+        (git-bug-tests--fake-bug "9a0b1c2" "Medium" "open" nil 0 30))
+  "Only open bugs, with no labels and no replies.")
+
+(defconst git-bug-tests--layout-closed
+  (list (git-bug-tests--fake-bug "1a2b3c4" "Fixed thing" "closed"
+                                 '("fixed") 1 (* 86400 40))
+        (git-bug-tests--fake-bug "5d6e7f8" "Wontfix" "closed"
+                                 '("wontfix") 0 (* 86400 3)))
+  "Only closed bugs.")
+
+(defconst git-bug-tests--layout-scenarios
+  (list (list "open" 'open git-bug-tests--layout-open nil)
+        (list "closed" 'closed git-bug-tests--layout-closed nil)
+        (list "mixed" 'open git-bug-tests--layout-mixed nil)
+        (list "all" 'all git-bug-tests--layout-mixed nil)
+        (list "all, grouped" 'all git-bug-tests--layout-mixed t))
+  "Layout scenarios, as (NAME SCOPE BUGS GROUPED) lists.
+GROUPED turns on `git-bug-status-section-group-by-status'.")
+
+(defun git-bug-tests--layout-rows (bugs)
+  "Render BUGS and return their heading rows as (BUG . LINE) pairs.
+Lines that are not headings, such as section headings and group
+headings, are left out."
+  (with-temp-buffer
+    (git-bug--insert-bugs "/nonexistent/" bugs)
+    (let (rows)
+      (dolist (line (split-string (buffer-string) "\n"))
+        (when (string-match "\\`\\([[:xdigit:]]\\{7\\}\\) " line)
+          (let ((id (match-string 1 line)))
+            (when-let* ((bug (cl-find-if
+                              (lambda (bug)
+                                (equal (alist-get 'human_id bug) id))
+                              bugs)))
+              (push (cons bug line) rows)))))
+      (nreverse rows))))
+
+(defun git-bug-tests--should-align (scenario what offsets)
+  "Fail unless the SCENARIO puts every WHAT column at one place.
+OFFSETS are the column positions to compare."
+  (unless (< (length (delete-dups (copy-sequence offsets))) 2)
+    (error "%s: %s out of line: %S" scenario what offsets)))
+
+(ert-deftest git-bug-tests-heading-columns-align-scenarios ()
+  "Every heading column lines up, whatever the shape of the bug list."
+  (dolist (scenario git-bug-tests--layout-scenarios)
+    (let* ((name (nth 0 scenario))
+           (git-bug-status-section-scope (nth 1 scenario))
+           (bugs (nth 2 scenario))
+           (git-bug-status-section-group-by-status (nth 3 scenario))
+           (rows (git-bug-tests--layout-rows bugs)))
+      (should rows)
+      (let (status-starts title-starts label-starts reply-ends age-ends lengths)
+        (dolist (row rows)
+          (let* ((bug (car row))
+                 (line (cdr row))
+                 (title (git-bug--clean-title (alist-get 'title bug)))
+                 (replies (git-bug--comment-count bug))
+                 (age (git-bug--age-string (git-bug--bug-edit-time bug))))
+            (push (string-match (regexp-quote (alist-get 'status bug)) line)
+                  status-starts)
+            (push (string-match (regexp-quote title) line) title-starts)
+            (push (length line) lengths)
+            (when (alist-get 'labels bug)
+              (push (string-match "\\[" line) label-starts))
+            (when (> replies 0)
+              (should (string-match "([0-9]+)" line))
+              (push (match-end 0) reply-ends))
+            (should (string-match (concat (regexp-quote age) "\\'") line))
+            (push (match-end 0) age-ends)))
+        (git-bug-tests--should-align name "status column" status-starts)
+        (git-bug-tests--should-align name "title column" title-starts)
+        (git-bug-tests--should-align name "label column" label-starts)
+        (git-bug-tests--should-align name "reply column" reply-ends)
+        (git-bug-tests--should-align name "age column" age-ends)
+        (git-bug-tests--should-align name "heading length" lengths)
+        ;; A column absent from every bug is left out, not padded.
+        (when (null label-starts)
+          (should-not (string-match-p "\\[" (mapconcat #'cdr rows "\n"))))
+        (when (null reply-ends)
+          (should-not (string-match-p "([0-9])" (mapconcat #'cdr rows "\n"))))))))
+
 (ert-deftest git-bug-tests-pure-helper-declarations ()
   "Pure helpers tell the byte compiler about their behavior."
   (dolist (fn '(git-bug--bug-author-fields
