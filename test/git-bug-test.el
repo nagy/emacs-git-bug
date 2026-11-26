@@ -69,6 +69,14 @@ DESCRIPTION is the bug body; default to a plain-text one."
             (car (split-string out))))
       (delete-file file))))
 
+(defun git-bug-tests--heading-line (title)
+  "Return the heading line that mentions TITLE, without properties."
+  (save-excursion
+    (goto-char (point-min))
+    (search-forward title)
+    (buffer-substring-no-properties (line-beginning-position)
+                                    (line-end-position))))
+
 (ert-deftest git-bug-tests-list-empty-repo ()
   "An empty repository yields no bugs."
   (git-bug-tests--with-repo repo
@@ -178,6 +186,50 @@ DESCRIPTION is the bug body; default to a plain-text one."
             (should (string-match-p "(2)" text))
             (should (string-match-p "now" text))))))))
 
+(ert-deftest git-bug-tests-heading-columns-align ()
+  "Labels and ages line up in their own columns."
+  (git-bug-tests--with-repo repo
+    (let ((short (git-bug-tests--new-bug repo "Short"))
+          (long (git-bug-tests--new-bug repo "A considerably longer title")))
+      (git-bug--call repo "bug" "label" "new" short "ui")
+      (git-bug--call repo "bug" "label" "new" long "core")
+      (with-temp-buffer
+        (git-bug-insert-status-bugs)
+        (let ((short-line (git-bug-tests--heading-line "Short"))
+              (long-line (git-bug-tests--heading-line
+                          "A considerably longer title")))
+          (should (string-match-p "\\[ui\\]" short-line))
+          (should (string-match-p "\\[core\\]" long-line))
+          ;; The labels and the age columns start at the same offset,
+          ;; however much the titles differ in length.
+          (should (= (string-match "\\[" short-line)
+                     (string-match "\\[" long-line)))
+          (should (= (string-match "now" short-line)
+                     (string-match "now" long-line))))))))
+
+(ert-deftest git-bug-tests-heading-status-column-fits ()
+  "The status column is only as wide as the statuses that appear."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Alpha")
+    (let ((closed (git-bug-tests--new-bug repo "Bravo")))
+      (git-bug--set-status repo closed "close")
+      (with-temp-buffer
+        (git-bug-insert-status-bugs)
+        ;; Only open bugs are listed, so "open" needs no padding.
+        (should (string-match-p "open Alpha now\\'"
+                                (git-bug-tests--heading-line "Alpha"))))
+      (let ((git-bug-status-section-scope 'all))
+        (with-temp-buffer
+          (git-bug-insert-status-bugs)
+          (let ((open-line (git-bug-tests--heading-line "Alpha"))
+                (closed-line (git-bug-tests--heading-line "Bravo")))
+            ;; "closed" sets the width, so "open" gets two spaces of
+            ;; padding plus the separator before the title.
+            (should (string-match-p "open   Alpha now\\'" open-line))
+            (should (string-match-p "closed Bravo now\\'" closed-line))
+            (should (= (string-match "Alpha" open-line)
+                       (string-match "Bravo" closed-line)))))))))
+
 (ert-deftest git-bug-tests-pure-helper-declarations ()
   "Pure helpers tell the byte compiler about their behavior."
   (dolist (fn '(git-bug--bug-author-fields
@@ -189,14 +241,17 @@ DESCRIPTION is the bug body; default to a plain-text one."
                 git-bug--comment-count
                 git-bug--all-labels
                 git-bug--all-authors
-                git-bug--bug-edit-time))
+                git-bug--bug-edit-time
+                git-bug--pad-cell))
     (should (function-get fn 'pure))
     (should (function-get fn 'side-effect-free)))
   (dolist (fn '(git-bug--filter-bugs
                 git-bug--sort-bugs
-                git-bug--displayed-bugs))
-    ;; These read customizable variables, so their result can change
-    ;; without an argument change.
+                git-bug--displayed-bugs
+                git-bug--heading-cells
+                git-bug--heading-widths))
+    ;; These read the clock or customizable variables, so their
+    ;; result can change without an argument change.
     (should-not (function-get fn 'pure))
     (should (function-get fn 'side-effect-free))))
 

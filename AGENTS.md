@@ -27,6 +27,10 @@ License: AGPL-3.0-or-later.
 - Ad-hoc run inside `nix develop`:
   `emacs -Q --batch -L . -L test --eval '(setq treesit-extra-load-path (list (getenv "MARKDOWN_GRAMMARS")))' -l test/git-bug-test.el -f ert-run-tests-batch-and-exit`.
   Needs `git` and `git-bug` on `PATH`.
+- Layout harness: `emacs -Q --batch -L . -L test -l test/preview.el`
+  prints sample Bugs sections through the real renderer, so column
+  alignment can be judged by eye.  It needs no repository and no
+  `git-bug`; it is not part of the gate.
 
 ## Rules
 

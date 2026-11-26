@@ -757,20 +757,83 @@ Git-bug takes the title from the first line of the message."
             ((< delta 2592000) (format "%dd" (/ delta 86400)))
             (t (format "%dmo" (/ delta 2592000)))))))
 
-(defun git-bug--heading-extras (bug)
-  "Return propertized labels, reply count and age for BUG."
-  (let* ((labels (git-bug--sorted-labels (alist-get 'labels bug)))
-         (comments (git-bug--comment-count bug))
+(defconst git-bug--heading-columns '(id status title labels replies age)
+  "Columns of a bug heading, in display order.")
+
+(defconst git-bug--heading-column-alignment
+  '((id . left)
+    (status . left)
+    (title . left)
+    (labels . left)
+    (replies . right)
+    (age . right))
+  "Alignment of each heading column.")
+
+(defun git-bug--heading-cells (bug)
+  "Return the heading cells of BUG as an alist of COLUMN to (TEXT FACE).
+TEXT is nil for a column without content, such as the labels of an
+unlabelled bug."
+  (declare (side-effect-free t))
+  (let* ((status (or (alist-get 'status bug) "unknown"))
+         (labels (git-bug--sorted-labels (alist-get 'labels bug)))
+         (replies (git-bug--comment-count bug))
          (age (git-bug--age-string
                (alist-get 'timestamp (alist-get 'edit_time bug)))))
-    (concat (when labels
-              (concat " " (propertize (format "[%s]" (string-join labels ","))
-                                       'font-lock-face 'magit-tag)))
-            (when (> comments 0)
-              (concat " " (propertize (format "(%d)" comments)
-                                       'font-lock-face 'magit-dimmed)))
-            (when (not (string-empty-p age))
-              (concat " " (propertize age 'font-lock-face 'magit-dimmed))))))
+    (list
+     (cons 'id (list (or (alist-get 'human_id bug) "") 'magit-hash))
+     (cons 'status
+           (list status (if (equal status "open") 'success 'magit-dimmed)))
+     (cons 'title (list (git-bug--clean-title (alist-get 'title bug))
+                        'magit-section-heading))
+     (cons 'labels (list (when labels (format "[%s]" (string-join labels ",")))
+                         'magit-tag))
+     (cons 'replies (list (when (> replies 0) (format "(%d)" replies))
+                          'magit-dimmed))
+     (cons 'age (list (unless (string-empty-p age) age) 'magit-dimmed)))))
+
+(defun git-bug--heading-widths (bugs)
+  "Return an alist of heading column widths for BUGS.
+Every column is as wide as its widest cell, so that all headings
+line up like the rows of a table.  Columns without any content end
+up zero wide and are left out when the headings are rendered."
+  (declare (side-effect-free t))
+  (let ((cells (mapcar #'git-bug--heading-cells bugs)))
+    (mapcar (lambda (column)
+              (cons column
+                    (cl-loop for row in cells
+                             maximize (length (or (car (alist-get column row)) "")))))
+            git-bug--heading-columns)))
+
+(defun git-bug--pad-cell (text face width align)
+  "Return TEXT fontified with FACE and padded to WIDTH.
+ALIGN is either the symbol `left' or `right'.  The padding stays
+unfontified, so it never carries the color of the cell."
+  (declare (pure t) (side-effect-free t))
+  (let* ((body (propertize text 'font-lock-face face))
+         (padding (max 0 (- width (length text)))))
+    (if (eq align 'right)
+        (concat (make-string padding ?\s) body)
+      (concat body (make-string padding ?\s)))))
+
+(defun git-bug--heading-string (bug widths)
+  "Return the heading line of BUG, laid out with column WIDTHS.
+WIDTHS is an alist as `git-bug--heading-widths' returns it.  Cells
+of a zero-wide column are left out, so a list of only open bugs
+spends no room on the width of \"closed\"."
+  (let* ((cells (git-bug--heading-cells bug))
+         (columns (cl-remove-if-not (lambda (column)
+                                      (> (alist-get column widths) 0))
+                                    git-bug--heading-columns))
+         (parts (mapcar (lambda (column)
+                          (let ((cell (alist-get column cells)))
+                            (git-bug--pad-cell
+                             (or (car cell) "")
+                             (cadr cell)
+                             (alist-get column widths)
+                             (alist-get column
+                                        git-bug--heading-column-alignment))))
+                        columns)))
+    (string-trim-right (string-join parts " "))))
 
 (defun git-bug--refresh-current-status ()
   "Refresh the Magit status buffer for the current context."
@@ -855,25 +918,15 @@ Git-bug takes the title from the first line of the message."
   (declare (pure t) (side-effect-free t))
   (alist-get 'timestamp (alist-get 'edit_time bug)))
 
-(defun git-bug--insert-bug (repo bug)
-  "Insert REPO's BUG as a collapsed `git-bug-bug-section'."
+(defun git-bug--insert-bug (repo bug widths)
+  "Insert REPO's BUG as a collapsed `git-bug-bug-section'.
+WIDTHS are the shared column widths of the surrounding list, see
+`git-bug--heading-widths'."
   (magit-insert-section (git-bug-bug-section bug 'hide)
-    (let ((id (or (alist-get 'human_id bug) ""))
-          (bug-id (alist-get 'id bug))
-          (status (or (alist-get 'status bug) "unknown")))
+    (let ((bug-id (alist-get 'id bug)))
       ;; Note the `font-lock-face' property, not `face': font-lock
       ;; refontification strips `face', leaving the ids unfontified.
-      (magit-insert-heading
-       (concat (propertize id 'font-lock-face 'magit-hash)
-               " "
-               (propertize (format "%-6s" status)
-                           'font-lock-face (if (equal status "open")
-                                               'success
-                                             'magit-dimmed))
-               " "
-               (propertize (git-bug--clean-title (alist-get 'title bug))
-                           'font-lock-face 'magit-section-heading)
-               (git-bug--heading-extras bug)))
+      (magit-insert-heading (git-bug--heading-string bug widths))
       ;; Magit runs this body only when the user expands the section.
       ;; Fetching details for every collapsed bug blocks `magit-status'.
       (magit-insert-section-body
@@ -886,12 +939,13 @@ Git-bug takes the title from the first line of the message."
                             (error-message-string err))
                     'font-lock-face 'error))))))))
 
-(defun git-bug--insert-group (repo label bugs)
-  "Insert for REPO a status group named LABEL with BUGS."
+(defun git-bug--insert-group (repo label bugs widths)
+  "Insert for REPO a status group named LABEL with BUGS.
+WIDTHS are the shared column widths of the whole bug list."
   (magit-insert-section (git-bug-status-group-section)
     (magit-insert-heading (format "%s (%d)" label (length bugs)))
     (dolist (bug bugs)
-      (git-bug--insert-bug repo bug))
+      (git-bug--insert-bug repo bug widths))
     (insert ?\n)))
 
 (defun git-bug--insert-bugs (repo bugs)
@@ -900,7 +954,8 @@ Handle a nil BUGS list when `git-bug-status-section-show-empty' is
 non-nil."
   (let* ((scope git-bug-status-section-scope)
          (displayed (and bugs (git-bug--displayed-bugs bugs)))
-         (shown (git-bug--select displayed scope)))
+         (shown (git-bug--select displayed scope))
+         (widths (git-bug--heading-widths shown)))
     (when (or bugs git-bug-status-section-show-empty)
       (magit-insert-section (git-bug-bugs-section)
         (magit-insert-heading
@@ -912,10 +967,10 @@ non-nil."
           (dolist (group '(("Open" . open) ("Closed" . closed)))
             (let ((group-bugs (git-bug--select displayed (cdr group))))
               (when group-bugs
-                (git-bug--insert-group repo (car group) group-bugs)))))
+                (git-bug--insert-group repo (car group) group-bugs widths)))))
          (t
           (dolist (bug shown)
-            (git-bug--insert-bug repo bug))))
+            (git-bug--insert-bug repo bug widths))))
         (insert ?\n)))))
 
 ;;;###autoload

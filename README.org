@@ -15,6 +15,10 @@ Add the section inserter to the status sections hook:
 The section always shows the listed count over the total count.
 Every bug is a collapsible section; expand it to load labels,
 description and comments.
+Headings are laid out in columns: short id, status, title, labels,
+reply count and age.
+Every column is as wide as its widest cell and empty columns are
+dropped, so the labels of all bugs line up.
 Bug bodies are fontified as Markdown with the builtin
 =markdown-ts-mode= when its tree-sitter grammars are installed;
 Markdown markup symbols are then hidden and links stay clickable.
