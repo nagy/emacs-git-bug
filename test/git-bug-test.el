@@ -351,11 +351,16 @@ OFFSETS are the column positions to compare."
                 git-bug--all-labels
                 git-bug--all-authors
                 git-bug--bug-edit-time
+                git-bug--label-match
+                git-bug--label-key-lessp
                 git-bug--pad-cell))
     (should (function-get fn 'pure))
     (should (function-get fn 'side-effect-free)))
   (dolist (fn '(git-bug--filter-bugs
                 git-bug--sort-bugs
+                git-bug--label-rank
+                git-bug--best-label-rank
+                git-bug--label-sort-key
                 git-bug--displayed-bugs
                 git-bug--heading-cells
                 git-bug--heading-widths))
@@ -363,6 +368,78 @@ OFFSETS are the column positions to compare."
     ;; result can change without an argument change.
     (should-not (function-get fn 'pure))
     (should (function-get fn 'side-effect-free))))
+
+(ert-deftest git-bug-tests-sort-by-label-buckets ()
+  "The label order sorts bugs into the buckets its rules name."
+  (let* ((urgent '((id . "u")
+                   (labels . ("urgent" "ui"))
+                   (edit_time (timestamp . 1))))
+         (p1 '((id . "1")
+               (labels . ("priority:P1"))
+               (edit_time (timestamp . 2))))
+         (p2 '((id . "2")
+               (labels . ("priority:P2"))
+               (edit_time (timestamp . 3))))
+         (plain '((id . "p")
+                  (labels . ("ui"))
+                  (edit_time (timestamp . 9))))
+         (bare '((id . "n")
+                 (edit_time (timestamp . 8))))
+         (git-bug-status-section-sort 'label)
+         (git-bug-status-section-label-order
+          '("^urgent$" "^priority:P1$" "^priority:P2$")))
+    ;; Buckets rank by rule, then the unmatched bugs by edit time.
+    (should (equal (mapcar (lambda (bug) (alist-get 'id bug))
+                           (git-bug--sort-bugs
+                            (list bare plain p2 urgent p1)))
+                   '("u" "1" "2" "p" "n")))
+    (should (equal (git-bug--label-rank "priority:P2") '(2 . "")))
+    (should-not (git-bug--label-rank "ui")))
+  ;; An empty rule list leaves the edit-time order alone.
+  (let ((git-bug-status-section-sort 'label)
+        (git-bug-status-section-label-order nil)
+        (a '((id . "a") (edit_time (timestamp . 10))))
+        (b '((id . "b") (edit_time (timestamp . 20)))))
+    (should (equal (mapcar (lambda (bug) (alist-get 'id bug))
+                           (git-bug--sort-bugs (list a b)))
+                   '("b" "a")))))
+
+(ert-deftest git-bug-tests-sort-by-label-capture ()
+  "A grouped rule sorts bugs by the text it captures."
+  (let* ((p2 '((id . "2")
+               (labels . ("priority:P2"))
+               (edit_time (timestamp . 1))))
+         (p9 '((id . "9")
+               (labels . ("priority:P9"))
+               (edit_time (timestamp . 2))))
+         (p10 '((id . "10")
+                (labels . ("priority:P10"))
+                (edit_time (timestamp . 3))))
+         (plain '((id . "p")
+                  (labels . ("ui"))
+                  (edit_time (timestamp . 4))))
+         (git-bug-status-section-sort 'label)
+         (git-bug-status-section-label-order
+          '(("^priority:P\\([0-9]+\\)$" . 1))))
+    (should (equal (mapcar (lambda (bug) (alist-get 'id bug))
+                           (git-bug--sort-bugs (list p10 plain p2 p9)))
+                   '("2" "9" "10" "p")))
+    (should (equal (git-bug--label-match "priority:P10" (car git-bug-status-section-label-order))
+                   "10"))
+    ;; One bug takes its best match, not its last one.
+    (should (equal (git-bug--best-label-rank '("priority:P2" "priority:P1"))
+                   '(0 . "1")))))
+
+(ert-deftest git-bug-tests-label-rule-matching ()
+  "Label rules match one label at a time, case-sensitively."
+  (should (equal (git-bug--label-match "urgent" "^urgent$") ""))
+  (should-not (git-bug--label-match "urgent-ish" "^urgent$"))
+  (should-not (git-bug--label-match "Urgent" "^urgent$"))
+  ;; A rule outranks a capture group of a later rule.
+  (let ((git-bug-status-section-label-order
+         '("^priority:P1$" ("^priority:P\\([0-9]+\\)$" . 1))))
+    (should (equal (git-bug--label-rank "priority:P1") '(0 . "")))
+    (should (equal (git-bug--label-rank "priority:P5") '(1 . "5")))))
 
 (ert-deftest git-bug-tests-sort-and-filter ()
   "Sorting and filtering operate on the list JSON."
@@ -410,6 +487,12 @@ OFFSETS are the column positions to compare."
               ((symbol-function 'git-bug--refresh-current-status) #'ignore))
       (git-bug-set-scope)
       (should (eq git-bug-status-section-scope 'all)))
+    (let ((git-bug-status-section-sort 'edit-time))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (&rest _) "label"))
+                ((symbol-function 'git-bug--refresh-current-status) #'ignore))
+        (git-bug-set-sort)
+        (should (eq git-bug-status-section-sort 'label))))
     (git-bug-clear-filters)
     (should-not git-bug-status-section-label)
     (should-not git-bug-status-section-author)))

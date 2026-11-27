@@ -71,7 +71,11 @@ A prefix argument on =w= copies the full id or ref.
 =git-bug-status-section-label= and
 =git-bug-status-section-author= narrow the list.
 =git-bug-status-section-sort= orders by =edit-time=, =create-time=,
-=title=, =status= or =id=.
+=title=, =status=, =label= or =id=.
+The =label= order ranks bugs with =git-bug-status-section-label-order=,
+an ordered list of regexps that each match one label, or of conses
+of a regexp and a capture group number; a rule's position decides
+the bucket and its capture group decides the order inside it.
 With =git-bug-status-section-group-by-status=, the =all= scope splits
 into Open and Closed groups.
 
@@ -101,6 +105,7 @@ Explicit writes refresh the status section and an open viewer buffer.
 | =git-bug-status-section-label=           | =nil=       | Label filter                     |
 | =git-bug-status-section-author=          | =nil=       | Author filter                    |
 | =git-bug-status-section-sort=            | =edit-time= | Sort order                       |
+| =git-bug-status-section-label-order=     | =nil=       | Rules ranking bugs by label      |
 | =git-bug-status-section-group-by-status= | =nil=       | Group the all scope              |
 | =git-bug-status-section-show-empty=      | =t=         | Show an empty Bugs section       |
 | =git-bug-status-section-show-errors=     | =t=         | Show an unavailable Bugs section |

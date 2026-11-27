@@ -98,12 +98,34 @@ all bugs."
   :group 'git-bug)
 
 (defcustom git-bug-status-section-sort 'edit-time
-  "How `git-bug-insert-status-bugs' sorts bugs."
+  "How `git-bug-insert-status-bugs' sorts bugs.
+The `label' choice ranks bugs with
+`git-bug-status-section-label-order'."
   :type '(choice (const :tag "Last edited" edit-time)
                  (const :tag "Created" create-time)
                  (const :tag "Title" title)
                  (const :tag "Status" status)
+                 (const :tag "Label order" label)
                  (const :tag "Id" id))
+  :group 'git-bug)
+
+(defcustom git-bug-status-section-label-order nil
+  "Rules that rank bugs by label for the `label' sort order.
+Each element is a regexp matched against one label at a time, or a
+cons of a regexp and a capture group number.  A rule's position
+decides the bucket a bug joins, and a rule's capture group decides
+the order inside that bucket, so plain regexps sort into priority
+buckets and a grouped regexp sorts by the text it captures:
+
+  \='(\"^urgent$\" \"^priority:P1$\" \"^priority:P2$\")
+  \='((\"^priority:P\\([0-9]+\\)$\" . 1))
+
+A bug ranks by its best match, so one carrying both `priority:P1'
+and `priority:P2' ranks as P1.  A bug that matches no rule sorts
+after every bug that does, and the captured text compares with
+`string-version-lessp', so P9 precedes P10.  Labels match
+case-sensitively.  An empty list leaves bugs in edit-time order."
+  :type '(repeat (choice regexp (cons regexp integer)))
   :group 'git-bug)
 
 (defcustom git-bug-status-section-label nil
@@ -247,6 +269,70 @@ when git-bug fails."
   (declare (pure t) (side-effect-free t))
   (or (alist-get 'timestamp (alist-get key bug)) 0))
 
+(defun git-bug--label-match (label rule)
+  "Return LABEL's sort text under RULE, or nil when RULE misses.
+RULE is a regexp matched against LABEL, or a cons of a regexp and a
+capture group number.  A rule with no group answers the empty
+string, so its matches share one sort text."
+  (declare (pure t) (side-effect-free t))
+  (let* ((regexp (if (consp rule) (car rule) rule))
+         (group (and (consp rule) (cdr rule)))
+         (case-fold-search nil))
+    (save-match-data
+      (when (string-match regexp label)
+        (or (and group (match-string group label)) "")))))
+
+(defun git-bug--label-rank (label)
+  "Return the rank of LABEL, or nil when no rule matches it.
+A rank is a cons of the index of the first rule of
+`git-bug-status-section-label-order' that matches LABEL and the
+sort text that rule gives it."
+  (declare (side-effect-free t))
+  (cl-loop for rule in git-bug-status-section-label-order
+           for index from 0
+           for text = (git-bug--label-match label rule)
+           when text
+           return (cons index text)))
+
+(defun git-bug--best-label-rank (labels)
+  "Return the best rank among LABELS, or nil when none matches.
+The lowest rule index wins, and the smallest sort text breaks a
+tie between two labels one rule matches."
+  (declare (side-effect-free t))
+  (let (best)
+    (dolist (label labels)
+      (let ((rank (git-bug--label-rank label)))
+        (when (and rank
+                   (or (null best)
+                       (< (car rank) (car best))
+                       (and (= (car rank) (car best))
+                            (string-version-lessp (cdr rank) (cdr best)))))
+          (setq best rank))))
+    best))
+
+(defun git-bug--label-sort-key (bug)
+  "Return the label sort key of BUG as a vector.
+The vector holds the rule rank, the captured text and the edit
+time.  A bug that matches no rule takes a rank past every rule, so
+it sorts last."
+  (declare (side-effect-free t))
+  (let ((rank (git-bug--best-label-rank (alist-get 'labels bug))))
+    (vector (if rank (car rank)
+              (length git-bug-status-section-label-order))
+            (if rank (cdr rank) "")
+            (git-bug--bug-time 'edit_time bug))))
+
+(defun git-bug--label-key-lessp (a b)
+  "Return non-nil when label sort key A precedes label sort key B.
+The edit time orders newest first inside one rank and one sort
+text."
+  (declare (pure t) (side-effect-free t))
+  (cond ((/= (aref a 0) (aref b 0))
+         (< (aref a 0) (aref b 0)))
+        ((not (equal (aref a 1) (aref b 1)))
+         (string-version-lessp (aref a 1) (aref b 1)))
+        (t (> (aref a 2) (aref b 2)))))
+
 (defun git-bug--sort-bugs (bugs)
   "Return BUGS sorted according to `git-bug-status-section-sort'."
   (declare (side-effect-free t))
@@ -273,6 +359,15 @@ when git-bug fails."
                             (> (git-bug--bug-time 'edit_time a)
                                (git-bug--bug-time 'edit_time b))
                           (string-lessp sa sb))))))
+      ('label
+       ;; Decorate first, so one key per bug is built once rather than
+       ;; once per comparison.
+       (mapcar #'cdr
+               (sort (mapcar (lambda (bug)
+                               (cons (git-bug--label-sort-key bug) bug))
+                             sorted)
+                     (lambda (a b)
+                       (git-bug--label-key-lessp (car a) (car b))))))
       ('id
        (sort sorted (lambda (a b)
                       (string-lessp (or (alist-get 'id a) "")
@@ -901,7 +996,7 @@ spends no room on the width of \"closed\"."
   (setq git-bug-status-section-sort
         (intern (completing-read
                  "Sort bugs by: "
-                 '("edit-time" "create-time" "title" "status" "id")
+                 '("edit-time" "create-time" "title" "status" "label" "id")
                  nil t nil nil
                  (symbol-name git-bug-status-section-sort))))
   (git-bug--refresh-current-status))
