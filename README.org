@@ -19,9 +19,10 @@ Headings are laid out in columns: short id, status, title, labels,
 reply count and age.
 Every column is as wide as its widest cell and empty columns are
 dropped, so the labels of all bugs line up.
-Bug bodies are fontified as Markdown with the builtin
-=markdown-ts-mode= when its tree-sitter grammars are installed;
-Markdown markup symbols are then hidden and links stay clickable.
+Bug bodies are refilled as =git-bug-body-fill= says and fontified as
+Markdown with the builtin =markdown-ts-mode= when its tree-sitter
+grammars are installed; Markdown markup symbols are then hidden and
+links stay clickable.
 
 ** Keys
 
@@ -136,7 +137,7 @@ the call.
 - =git-bug= 0.11 or newer (its path is baked in when built with Nix)
 - optional: the tree-sitter grammars =markdown= and =markdown-inline=
   (=M-x treesit-install-language-grammar=; for Markdown fontification
-  of bug bodies)
+  and refilling of bug bodies)
 
 * Customization
 
@@ -152,6 +153,7 @@ the call.
 | =git-bug-status-section-show-empty=      | =t=         | Show an empty Bugs section       |
 | =git-bug-status-section-show-errors=     | =t=         | Show an unavailable Bugs section |
 | =git-bug-status-section-verbose=         | =nil=       | Echo CLI failures                |
+| =git-bug-body-fill=                      | =t=         | Refill bodies to a column        |
 | =git-bug-detail-ttl=                     | =nil=       | Lifetime of a cached detail      |
 | =git-bug-change-functions=               | =nil=       | Hook run on bug changes          |
 

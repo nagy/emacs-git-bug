@@ -51,8 +51,9 @@ License: AGPL-3.0-or-later.
   call context attached, rather than a generic error.
 - Put faces on `font-lock-face`, never on `face`. Font-lock strips `face` on
   refontification. Bug bodies are fontified with the builtin `markdown-ts-mode`.
-- Keep Markdown fontification sandboxed: no native code blocks, inline images,
-  remote images or folding.
+- Keep the Markdown pass sandboxed (`git-bug--with-markdown-buffer`): no
+  native code blocks, inline images, remote images or folding. Refilling
+  (`git-bug-body-fill`) runs in that sandbox, before fontification.
 
 ## Conventions
 

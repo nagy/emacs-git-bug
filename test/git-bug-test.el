@@ -755,6 +755,125 @@ OFFSETS are the column positions to compare."
         (should (eq (get-text-property (1- start) 'invisible) t))
         (should (null (get-text-property start 'invisible)))))))
 
+(ert-deftest git-bug-tests-body-fill-columns ()
+  "`git-bug-body-fill' picks the width of a refilled body."
+  (skip-unless (git-bug--markdown-ts-ready-p))
+  (let* ((body (concat "A paragraph whose single line is long enough to be "
+                       "refilled into several shorter lines.\n"))
+         (words (split-string body "[ \t\n]+" t)))
+    ;; A number refills to that column, whatever `fill-column' says.
+    (let* ((git-bug-body-fill 30)
+           (fill-column 100)
+           (filled (git-bug--fill-body body))
+           (lines (split-string filled "\n" t)))
+      (should (> (length lines) 1))
+      (should (equal (split-string filled "[ \t\n]+" t) words))
+      (should (cl-every (lambda (line) (<= (length line) 30)) lines)))
+    ;; `t' refills to `fill-column'.
+    (let* ((git-bug-body-fill t)
+           (fill-column 20)
+           (filled (git-bug--fill-body body))
+           (lines (split-string filled "\n" t)))
+      (should (> (length lines) 2))
+      (should (cl-every (lambda (line) (<= (length line) 20)) lines)))
+    ;; Nil keeps the authored lines.
+    (let ((git-bug-body-fill nil))
+      (should (equal (git-bug--fill-body body) body)))))
+
+(ert-deftest git-bug-tests-body-fill-keeps-blocks ()
+  "Refilling keeps headings, code blocks, tables and HTML as authored."
+  (skip-unless (git-bug--markdown-ts-ready-p))
+  (let* ((atx "## A heading that runs past the fill column for sure")
+         (setext (concat "A setext heading that runs past the column\n"
+                         "--------------------------------------------------"))
+         (code "A code line that runs past the fill column for sure.")
+         (table "| a cell that runs past the column | b |\n|---|---|")
+         (html (concat "<div>\n  <p>A paragraph in html that runs past "
+                       "the column.</p>\n</div>"))
+         (prose "A paragraph that runs past the fill column for sure.\n")
+         ;; The heading follows the prose without a blank line between
+         ;; them, as CommonMark allows a heading to interrupt a
+         ;; paragraph.
+         (body (concat prose atx "\n\n" setext "\n\n```\n" code
+                       "\n```\n\n" table "\n\n" html "\n\n" prose))
+         (git-bug-body-fill 20)
+         (filled (git-bug--fill-body body)))
+    ;; Every block stays exactly as authored, away from point-min too.
+    (dolist (block (list atx setext code table html))
+      (should (string-match-p (regexp-quote block) filled)))
+    ;; The prose around them is refilled.
+    (should-not (string-match-p (regexp-quote (string-trim prose)) filled))
+    (should (string-match-p "for sure\\." filled))))
+
+(ert-deftest git-bug-tests-body-fill-containers ()
+  "Refilling reaches every paragraph of a list or a block quote."
+  (skip-unless (git-bug--markdown-ts-ready-p))
+  (let* ((nested (concat "- An outer item that is long enough to need "
+                         "refilling.\n"
+                         "  - A nested item that is long enough to need "
+                         "refilling.\n"))
+         (item (concat "- First paragraph of an item that is long enough "
+                       "to need refilling.\n\n"
+                       "  Second paragraph of the item that is long enough "
+                       "to need refilling.\n"))
+         (quote (concat "> short\n>\n> A quoted paragraph that is long "
+                        "enough to need refilling.\n"))
+         (quoted (concat "- > A quoted paragraph inside a list item that "
+                         "is long enough to refill.\n"))
+         (body (concat nested "\n" item "\n" quote "\n" quoted))
+         (git-bug-body-fill 30)
+         (filled (git-bug--fill-body body)))
+    ;; The nested item is refilled and keeps its indentation.
+    (should (string-match-p "^  - A nested item that is long\n    enough"
+                            filled))
+    ;; So is the second paragraph of the item, not just the first.
+    (should (string-match-p
+             "^  Second paragraph of the item\n  that is long"
+             filled))
+    ;; The quoted paragraph keeps its markers.
+    (should (string-match-p "^> A quoted paragraph that is\n> long enough"
+                            filled))
+    ;; So does a quote inside a list item.
+    (should (string-match-p "^- > A quoted paragraph inside\n  > a list item"
+                            filled))
+    ;; The first paragraph of the item is refilled as well.
+    (should (string-match-p "^- First paragraph of an item\n"
+                            filled))))
+
+(ert-deftest git-bug-tests-body-fill-in-views ()
+  "Expanded sections and viewer buffers refill bug bodies."
+  (skip-unless (git-bug--markdown-ts-ready-p))
+  (git-bug-tests--with-repo repo
+    (let* ((description
+            "A description that is far too long for a single line.\n")
+           (short (git-bug-tests--new-bug repo "Long body" description))
+           (git-bug-body-fill 24)
+           (buffer nil))
+      (unwind-protect
+          (progn
+            (with-temp-buffer
+              (git-bug-insert-status-bugs)
+              (goto-char (point-min))
+              (search-forward "Long body")
+              (goto-char (match-beginning 0))
+              (magit-section-show (magit-current-section))
+              (let ((text (buffer-substring-no-properties
+                           (point-min) (point-max))))
+                (should-not (string-match-p
+                             (regexp-quote (string-trim description)) text))
+                (should (string-match-p "far too long" text))
+                (should (string-match-p "single line\\." text))))
+            (setq buffer (git-bug-buffer repo short))
+            (with-current-buffer buffer
+              (let ((text (buffer-substring-no-properties
+                           (point-min) (point-max))))
+                (should-not (string-match-p
+                             (regexp-quote (string-trim description)) text))
+                (should (string-match-p "far too long" text))
+                (should (string-match-p "single line\\." text)))))
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer))))))
+
 (ert-deftest git-bug-tests-group-by-status ()
   "The all scope can split bugs into Open and Closed groups."
   (git-bug-tests--with-repo repo

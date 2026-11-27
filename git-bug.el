@@ -34,10 +34,11 @@
 ;;   (add-hook 'magit-status-sections-hook #'git-bug-insert-status-bugs 100)
 ;;
 ;; Every bug is a collapsible section; expand it to see its labels,
-;; description and comments.  Bug bodies are fontified as Markdown
-;; with the builtin `markdown-ts-mode', when its tree-sitter grammars
-;; are installed; markup symbols are then hidden.  On a bug heading,
-;; `RET' copies the short id and `x' flips the open/closed status.
+;; description and comments.  Bug bodies are refilled as
+;; `git-bug-body-fill' says and fontified as Markdown with the builtin
+;; `markdown-ts-mode', when its tree-sitter grammars are installed;
+;; markup symbols are then hidden.  On a bug heading, `RET' copies the
+;; short id and `x' flips the open/closed status.
 ;;
 ;; Which bugs are listed is controlled by `git-bug-status-section-scope'.
 ;; When this package is built with Nix, `git-bug-program' is rewritten
@@ -181,6 +182,22 @@ case-sensitively.  An empty list leaves bugs in edit-time order."
   "Author that filters the listed bugs, or nil for any author.
 Matching is case-insensitive against name, login and human id."
   :type '(choice (const :tag "Any author" nil) string)
+  :group 'git-bug)
+
+(defcustom git-bug-body-fill t
+  "How to refill a bug body for display, or nil to leave it alone.
+The body is the description of a bug and its comments, as an
+expanded section of the status buffer and the `git-bug-mode'
+viewer show them.  Non-nil refills every paragraph to
+`fill-column', except that a positive number refills to that
+column; nil keeps the lines as they were authored.
+Refilling leaves code blocks, tables, headings and HTML alone, and
+needs the tree-sitter grammars that Markdown fontification needs,
+see `git-bug--markdown-ts-ready-p'; without them a body stays as
+authored."
+  :type '(choice (const :tag "Fill to fill-column" t)
+                 (const :tag "Leave as authored" nil)
+                 (integer :tag "Fill to this column"))
   :group 'git-bug)
 
 (defgroup git-bug-data nil
@@ -765,58 +782,160 @@ both of the tree-sitter grammars it needs, `markdown' and
        (car (treesit-language-available-p 'markdown t))
        (car (treesit-language-available-p 'markdown-inline t))))
 
+(defmacro git-bug--with-markdown-buffer (string &rest body)
+  "Insert STRING into a temporary sandboxed Markdown buffer, then run BODY.
+The buffer activates the builtin `markdown-ts-mode'.  Bug bodies are
+untrusted, so the mode runs without native code blocks, inline
+images, remote images, folding or the editing helpers, and with
+`markdown-ts-hide-markup' enabled.  BODY runs with point at the
+start of the text, in a buffer that is temporary and doomed."
+  (declare (indent 1) (debug (form body)))
+  `(let ((markdown-ts-hide-markup t)
+         ;; Activating an embedded mode for a fenced block can
+         ;; prompt to install its grammar and discard the whole
+         ;; fontification on failure.  Keep bodies in Markdown.
+         (markdown-ts-fontify-code-blocks-natively nil)
+         ;; Bug bodies are untrusted.  Do not fetch images, fold
+         ;; headings, or enable editing helpers in this buffer.
+         (markdown-ts-inline-images nil)
+         (markdown-ts-display-remote-inline-images nil)
+         (markdown-ts-default-folding 'show-all)
+         (markdown-ts-enable-code-block-context-mode nil)
+         (markdown-ts-enable-table-mode nil))
+     (with-temp-buffer
+       (insert ,string)
+       (delay-mode-hooks (markdown-ts-mode))
+       (goto-char (point-min))
+       ,@body)))
+
 (defun git-bug--fontify-markdown (string)
   "Return STRING with Markdown syntax highlighting applied.
-Fontification runs STRING through `markdown-ts-mode' in a
-temporary buffer with `markdown-ts-hide-markup' enabled: markup
-symbols (backticks, emphasis markers, ...) get an `invisible'
-property of t, which hides them unconditionally in the target
-buffer.  Copy the `face' properties of the mode to
-`font-lock-face', which refontification does not strip (see
-`font-lock-default-unfontify-region').
+Fontification runs STRING through `markdown-ts-mode' in a sandboxed
+temporary buffer, see `git-bug--with-markdown-buffer', where
+`markdown-ts-hide-markup' hides markup symbols (backticks, emphasis
+markers, ...) with an `invisible' property of t, which hides them
+unconditionally in the target buffer.  Copy the `face' properties
+of the mode to `font-lock-face', which refontification does not
+strip (see `font-lock-default-unfontify-region').
 
 Return STRING unchanged when the tree-sitter grammars are absent (see
 `git-bug--markdown-ts-ready-p') or when the mode signals an error."
   (if (not (git-bug--markdown-ts-ready-p))
       string
     (condition-case nil
-        (let ((markdown-ts-hide-markup t)
-              ;; Activating an embedded mode for a fenced block can
-              ;; prompt to install its grammar and discard the whole
-              ;; fontification on failure.  Keep bodies in Markdown.
-              (markdown-ts-fontify-code-blocks-natively nil)
-              ;; Bug bodies are untrusted.  Do not fetch images, fold
-              ;; headings, or enable editing helpers in this buffer.
-              (markdown-ts-inline-images nil)
-              (markdown-ts-display-remote-inline-images nil)
-              (markdown-ts-default-folding 'show-all)
-              (markdown-ts-enable-code-block-context-mode nil)
-              (markdown-ts-enable-table-mode nil))
-          (with-temp-buffer
-            (insert string)
-            (delay-mode-hooks (markdown-ts-mode))
-            (font-lock-ensure)
-            (let ((out (copy-sequence string))
-                  (pos (point-min)))
-              (while (< pos (point-max))
-                (let* ((end (or (next-property-change pos) (point-max)))
-                       (face (get-text-property pos 'face))
-                       (hidden (get-text-property pos 'invisible)))
-                  ;; Buffer position POS is string index (1- POS).
-                  (when face
-                    (put-text-property (1- pos) (1- end)
-                                       'font-lock-face face out))
-                  (when hidden
-                    (put-text-property (1- pos) (1- end) 'invisible t out))
-                  ;; Keep Markdown link buttons usable.  Do not copy
-                  ;; `display': bug bodies stay free of images.
-                  (dolist (prop '(help-echo action category button
-                                  mouse-face keymap))
-                    (when-let* ((value (get-text-property pos prop)))
-                      (put-text-property (1- pos) (1- end) prop value out)))
-                  (setq pos end)))
-              out)))
+        (git-bug--with-markdown-buffer string
+          (font-lock-ensure)
+          (let ((out (copy-sequence string))
+                (pos (point-min)))
+            (while (< pos (point-max))
+              (let* ((end (or (next-property-change pos) (point-max)))
+                     (face (get-text-property pos 'face))
+                     (hidden (get-text-property pos 'invisible)))
+                ;; Buffer position POS is string index (1- POS).
+                (when face
+                  (put-text-property (1- pos) (1- end)
+                                     'font-lock-face face out))
+                (when hidden
+                  (put-text-property (1- pos) (1- end) 'invisible t out))
+                ;; Keep Markdown link buttons usable.  Do not copy
+                ;; `display': bug bodies stay free of images.
+                (dolist (prop '(help-echo action category button
+                                mouse-face keymap))
+                  (when-let* ((value (get-text-property pos prop)))
+                    (put-text-property (1- pos) (1- end) prop value out)))
+                (setq pos end)))
+            out))
       (error string))))
+
+(defun git-bug--paragraph-end (node)
+  "Return the end of paragraph NODE, without trailing block markers.
+The grammar hangs the blank `>' lines that follow a paragraph off
+the paragraph as `block_continuation' children; including them
+would merge the paragraph with the next one."
+  (let ((end (treesit-node-end node)))
+    (dolist (child (treesit-node-children node))
+      (when (equal (treesit-node-type child) "inline")
+        (setq end (treesit-node-end child))))
+    end))
+
+(defun git-bug--fill-prefix (start)
+  "Return the fill prefix of the paragraph whose text starts at START.
+The prefix is the start of that line up to START with the list
+markers replaced by spaces, so continuation lines line up with the
+text and keep the block quote markers, however deeply the
+paragraph is nested."
+  (save-excursion
+    (goto-char start)
+    (replace-regexp-in-string
+     "[^> \t]" " "
+     (buffer-substring-no-properties (line-beginning-position) start))))
+
+(defun git-bug--fill-markdown-paragraphs ()
+  "Refill the paragraphs of the current Markdown buffer.
+Fill to `fill-column', which the caller binds.  Walk the
+paragraphs `markdown-ts-mode' parses, so that every paragraph of a
+list or a block quote is refilled, not only the first one.
+Headings, code blocks, tables and HTML hold no paragraph, so they
+stay as authored; lists and block quotes keep their markers and
+their indentation."
+  (let ((paragraphs
+         ;; Collect the positions first: refilling outdates the
+         ;; tree-sitter nodes.
+         (mapcar (lambda (pair)
+                   (let ((node (cdr pair)))
+                     (list (treesit-node-start node)
+                           (git-bug--paragraph-end node)
+                           (treesit-node-type (treesit-node-parent node)))))
+                 (treesit-query-capture
+                  (treesit-buffer-root-node 'markdown)
+                  '((paragraph) @paragraph)))))
+    ;; Refill from the last paragraph to the first: a refill moves the
+    ;; paragraphs that follow it, not the ones before it.
+    (dolist (paragraph (reverse paragraphs))
+      (cl-destructuring-bind (start end parent) paragraph
+        ;; A setext heading is a paragraph with an underline that
+        ;; refilling would tear away from the text.
+        (unless (equal parent "setext_heading")
+          (save-restriction
+            ;; Refill the paragraph alone.  The block quote markers of
+            ;; the first line belong to the region.
+            (narrow-to-region (save-excursion
+                                (goto-char start)
+                                (line-beginning-position))
+                              end)
+            (goto-char start)
+            (let ((fill-prefix (git-bug--fill-prefix start))
+                  (fill-paragraph-function nil)
+                  (fill-forward-paragraph-function #'forward-paragraph)
+                  (adaptive-fill-function nil))
+              (fill-paragraph))))))))
+
+(defun git-bug--body-fill-column ()
+  "Return the column that bug bodies refill to, or nil to keep them."
+  (let ((value git-bug-body-fill))
+    (cond ((eq value t) fill-column)
+          ((and (integerp value) (> value 0)) value))))
+
+(defun git-bug--fill-body (string)
+  "Return the bug body STRING refilled, see `git-bug-body-fill'.
+Return STRING unchanged when the option keeps it, when the
+tree-sitter grammars are absent (see
+`git-bug--markdown-ts-ready-p') or when filling signals an error."
+  (let ((column (git-bug--body-fill-column)))
+    (if (and column (git-bug--markdown-ts-ready-p))
+        (condition-case nil
+            (git-bug--with-markdown-buffer string
+              (let ((fill-column column))
+                (git-bug--fill-markdown-paragraphs))
+              (buffer-string))
+          (error string))
+      string)))
+
+(defun git-bug--format-body (message)
+  "Return the bug body MESSAGE, refilled and Markdown fontified.
+Refill MESSAGE as `git-bug-body-fill' says, then fontify it as
+`git-bug--fontify-markdown' does."
+  (git-bug--fontify-markdown (git-bug--fill-body message)))
 
 (defun git-bug--author-display (author)
   "Return a cons of AUTHOR display text and face.
@@ -856,7 +975,7 @@ DETAIL is a bug alist, as `git-bug--detail' returns it."
   (let ((comments (alist-get 'comments detail)))
     ;; Comment number zero is the bug description.
     (when-let* ((body (car comments)))
-      (insert (git-bug--fontify-markdown (alist-get 'message body)) "\n"))
+      (insert (git-bug--format-body (alist-get 'message body)) "\n"))
     (cl-loop
      for comment in (cdr comments)
      for n from 1
@@ -867,7 +986,7 @@ DETAIL is a bug alist, as `git-bug--detail' returns it."
                 (propertize (car display) 'font-lock-face (cdr display))
                 (propertize ":" 'font-lock-face 'magit-dimmed))
         (insert "\n")
-        (insert (git-bug--fontify-markdown (alist-get 'message comment))
+        (insert (git-bug--format-body (alist-get 'message comment))
                 "\n"))))
 
 (defun git-bug--format-time (object)
