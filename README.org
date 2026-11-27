@@ -87,6 +87,48 @@ edit time.  An explicit refresh bypasses the cache.
 Subprocesses run with quiet git settings and UTF-8 coding.
 Explicit writes refresh the status section and an open viewer buffer.
 
+* Library
+
+The status section is one consumer of a small public surface, so these
+functions work outside Magit too.
+
+| Function                             | Result                            |
+|--------------------------------------+-----------------------------------|
+| =git-bug-list= REPO [FILTERS]          | Bugs, filtered, sorted and scoped |
+| =git-bug-get= REPO ID [FORCE]          | One full bug                      |
+| =git-bug-field= BUG NAME               | One value of a bug, by name       |
+| =git-bug-format-bug= BUG [FACES]       | One heading line as text          |
+| =git-bug-format-bug-list= BUGS [FACES] | Every heading line, aligned       |
+| =git-bug-buffer= REPO ID [MODE]        | A viewer buffer, not selected     |
+| =git-bug-show= REPO ID [MODE]          | Show that buffer                  |
+| =git-bug-forget= [REPO] [ID]           | Drop cached bugs                  |
+| =git-bug-error-data= ERR               | Context of a failed call          |
+
+Answers keep the shape of the git-bug JSON, so no accessor hides the wire.
+=git-bug-list= carries a =comments= count and =git-bug-get= a =comments=
+list whose first element is the bug description.
+=git-bug-field= reads a key by name, ignoring case.
+=git-bug-forget= takes a full id or the short =human_id= of a heading.
+
+=FILTERS= is a plist, and a nil value keeps the customizable default:
+=:scope=, =:label=, =:author=, =:sort= and =:label-order=.
+
+Calls block Emacs while git-bug runs; there is no async variant.
+Cached details live in a hash table keyed by repository, full id and edit
+time, and are served while =git-bug-detail-ttl= allows.
+A write, a forced read or =git-bug-forget= reports one plist per change
+through =git-bug-change-functions=, after the section and the open
+viewers have refreshed themselves; a fetch that returns the cached
+content reports nothing.
+An =invalidate= event from =git-bug-forget= carries no new answer, so a
+view of that bug keeps its text and re-reads storage on its next refresh.
+
+Failures signal a subtype of =git-bug-error=:
+=git-bug-call-failed=, =git-bug-missing-program=,
+=git-bug-invalid-output= or =git-bug-invalid-argument=.
+=git-bug-error-data= returns the arguments, exit status and stderr of
+the call.
+
 * Requirements
 
 - Emacs 31.1
@@ -110,6 +152,8 @@ Explicit writes refresh the status section and an open viewer buffer.
 | =git-bug-status-section-show-empty=      | =t=         | Show an empty Bugs section       |
 | =git-bug-status-section-show-errors=     | =t=         | Show an unavailable Bugs section |
 | =git-bug-status-section-verbose=         | =nil=       | Echo CLI failures                |
+| =git-bug-detail-ttl=                     | =nil=       | Lifetime of a cached detail      |
+| =git-bug-change-functions=               | =nil=       | Hook run on bug changes          |
 
 A repository without git-bug refs and without a git-bug cache stays
 untouched.

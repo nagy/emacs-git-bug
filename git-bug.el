@@ -43,6 +43,35 @@
 ;; When this package is built with Nix, `git-bug-program' is rewritten
 ;; to the absolute store path of the git-bug binary, so nothing has to
 ;; be present on `exec-path'.
+;;
+;; Library:
+;;
+;; The status section is one consumer of a small public surface.  Read
+;; bugs, render them as text and open the viewer without touching a
+;; Magit buffer:
+;;
+;;   (git-bug-list REPO &optional FILTERS)          bugs and their fields
+;;   (git-bug-get REPO ID &optional FORCE)          one full bug
+;;   (git-bug-field BUG NAME)                       one value of a bug
+;;   (git-bug-format-bug BUG &optional FACES)       one heading line
+;;   (git-bug-format-bug-list BUGS &optional FACES) every heading line
+;;   (git-bug-buffer REPO ID &optional MODE)        a viewer buffer
+;;   (git-bug-show REPO ID &optional MODE)          show that buffer
+;;   (git-bug-forget &optional REPO ID)             drop cached bugs
+;;
+;; Every answer keeps the shape of the git-bug JSON, so no accessor
+;; hides the wire: `git-bug-list' carries a `comments' count and
+;; `git-bug-get' a `comments' list whose first element is the bug
+;; description.  `git-bug-field' reads a key by name, ignoring case.
+;;
+;; Calls block Emacs while git-bug runs; there is no async variant.
+;; Cached details live in a hash table, keyed by repository, full id
+;; and edit time, and served while `git-bug-detail-ttl' allows.  A
+;; write, an explicit forced read or `git-bug-forget' reports one plist
+;; per change through `git-bug-change-functions', after the package has
+;; refreshed the status section and the open viewers itself.  Failures
+;; signal a subtype of `git-bug-error', with the arguments, exit status
+;; and stderr of the call in `git-bug-error-data'.
 
 ;;; Code:
 
@@ -59,6 +88,21 @@
   :link '(url-link :tag "Repository" "https://github.com/nagy/emacs-git-bug"))
 
 (define-error 'git-bug-error "Git-bug error")
+(define-error 'git-bug-call-failed "Git-bug call failed" 'git-bug-error)
+(define-error 'git-bug-missing-program
+  "Git-bug executable not found" 'git-bug-error)
+(define-error 'git-bug-invalid-output
+  "Unparseable git-bug output" 'git-bug-error)
+(define-error 'git-bug-invalid-argument
+  "Invalid git-bug argument" 'git-bug-error)
+
+(defun git-bug-error-data (err)
+  "Return the context plist attached to condition ERR.
+ERR is a condition as `condition-case' binds it.  The keys depend on
+the condition: `git-bug-call-failed' carries :args, :exit and
+:stderr; `git-bug-missing-program' and `git-bug-invalid-output'
+carry :program; `git-bug-invalid-argument' carries :value."
+  (cddr err))
 
 (defcustom git-bug-program "git-bug"
   "The git-bug executable used to interact with bugs.
@@ -139,6 +183,48 @@ Matching is case-insensitive against name, login and human id."
   :type '(choice (const :tag "Any author" nil) string)
   :group 'git-bug)
 
+(defgroup git-bug-data nil
+  "Reading bugs from git-bug storage."
+  :group 'git-bug)
+
+(defcustom git-bug-detail-ttl nil
+  "How long, in seconds, a cached bug detail stays fresh.
+Nil keeps a cached answer until the bug's edit time changes or the
+cache overflows; zero makes every read ask git-bug again.  The
+cache fills on reads of `git-bug-get' and of expanded bug
+sections, so this only bounds how stale a repeat read can be."
+  :type '(choice (const :tag "Forever" nil)
+                 (const :tag "Always stale" 0)
+                 (number :tag "Seconds"))
+  :group 'git-bug-data)
+
+(defcustom git-bug-change-functions nil
+  "Abnormal hook run when a bug of the repository changes.
+Each function receives one plist with these keys:
+
+  :type   the domain type, always `bug'
+  :kind   the answer kind, always `show'
+  :event  `create', `change' or `invalidate'
+  :repo   the repository of the bug, expanded and without a
+          trailing slash
+  :id     the full id of the bug
+  :old    the detail that goes away, or nil
+  :new    the detail that arrives, or nil
+
+The package refreshes the status section and the open viewers
+itself, before it runs this hook, so the hook serves consumers that
+keep state of their own.  A fetch that returns the cached content
+runs nothing.  `create' reports a bug that had no cached answer,
+`change' a different answer for a bug that had one, and
+`invalidate' an answer that `git-bug-forget' dropped; an
+`invalidate' carries no `:new', so a view of that bug keeps its
+text until its next read.  A write that the package makes itself
+reports `change' even without a cached answer, because it knows
+that storage moved; `:old' is then nil.  Writes and external edits
+reach a consumer the same way."
+  :type 'hook
+  :group 'git-bug-data)
+
 (defclass git-bug-bugs-section (magit-section)
   ((keymap :initform 'git-bug-bugs-section-map))
   "Class for the section listing the bugs of a repository.")
@@ -154,8 +240,8 @@ Matching is case-insensitive against name, login and human id."
   "Run git-bug in REPO with ARGS and return its standard output.
 Standard error goes to a temporary file: the split-destination
 form of `process-file' only accepts file names for it, and
-git-bug prints progress noise there anyway.  Signal
-`git-bug-error' when git-bug exits with a non-zero status."
+git-bug prints progress noise there anyway.  Signal the conditions
+of `git-bug--call-with-input'."
   (apply #'git-bug--call-with-input repo nil args))
 
 (defun git-bug--process-environment ()
@@ -166,8 +252,13 @@ git-bug prints progress noise there anyway.  Signal
 
 (defun git-bug--call-with-input (repo input &rest args)
   "Run git-bug in REPO with INPUT on standard input and ARGS.
-Return standard output.  Signal `git-bug-error' when git-bug exits
-with a non-zero status."
+Return standard output.  Signal `git-bug-call-failed' when git-bug
+exits with a non-zero status, `git-bug-missing-program' when the
+executable is absent and `git-bug-invalid-argument' when REPO is
+not a directory."
+  (unless (file-directory-p repo)
+    (signal 'git-bug-invalid-argument
+            (list (format "Not a directory: %s" repo) :value repo)))
   (let ((stderr (make-temp-file "git-bug-stderr"))
         (stdin (and input (make-temp-file "git-bug-stdin"))))
     (unwind-protect
@@ -181,16 +272,23 @@ with a non-zero status."
                    (process-environment (git-bug--process-environment))
                    (coding-system-for-read 'utf-8-unix)
                    (coding-system-for-write 'utf-8-unix)
-                   (exit (apply #'process-file git-bug-program stdin
-                                (list t stderr) nil args)))
+                   (exit (condition-case nil
+                             (apply #'process-file git-bug-program stdin
+                                    (list t stderr) nil args)
+                           (file-missing
+                            (signal 'git-bug-missing-program
+                                    (list (format "Cannot run git-bug: %s"
+                                                  git-bug-program)
+                                          :program git-bug-program))))))
               (unless (eq exit 0)
                 (let ((err (string-trim (git-bug--read-file stderr))))
-                  (signal 'git-bug-error
+                  (signal 'git-bug-call-failed
                           (list (format "Git-bug %s failed: %s"
                                         (string-join args " ")
                                         (if (string-empty-p err)
                                             (string-trim (buffer-string))
-                                          err))))))
+                                          err))
+                                :args args :exit exit :stderr err))))
               (buffer-string))))
       (delete-file stderr)
       (when stdin
@@ -206,12 +304,19 @@ with a non-zero status."
 (defun git-bug--parse-json (string)
   "Parse JSON STRING into Lisp data.
 Objects become alists with symbol keys, arrays become lists and
-JSON null becomes nil."
-  (json-parse-string string
-                     :object-type 'alist
-                     :array-type 'list
-                     :null-object nil
-                     :false-object nil))
+JSON null becomes nil.  Signal `git-bug-invalid-output' when
+STRING is not valid JSON."
+  (condition-case err
+      (json-parse-string string
+                         :object-type 'alist
+                         :array-type 'list
+                         :null-object nil
+                         :false-object nil)
+    (json-error
+     (signal 'git-bug-invalid-output
+             (list (format "Cannot parse git-bug output: %s"
+                           (error-message-string err))
+                   :program git-bug-program)))))
 
 (defun git-bug--git-dir (repo)
   "Return the absolute git directory of REPO, or nil."
@@ -232,8 +337,11 @@ noise from a global `magit-status-sections-hook' entry."
 
 (defun git-bug--list (repo)
   "Return all bugs in REPO as a list of alists.
-Return nil when REPO contains no bugs.  Signal `git-bug-error'
-when git-bug fails."
+Return nil when REPO contains no bugs.  Signal
+`git-bug-call-failed' when git-bug fails and `git-bug-invalid-output'
+when its answer is not JSON.  The alists keep the keys of the
+`git-bug bug --format json' objects; `comments' is a count here and
+a list in `git-bug-get'."
   (let ((out (git-bug--call repo "bug" "--format" "json")))
     (unless (string-blank-p out)
       (git-bug--parse-json out))))
@@ -246,23 +354,28 @@ when git-bug fails."
           (alist-get 'login author)
           (alist-get 'human_id author))))
 
-(defun git-bug--filter-bugs (bugs)
-  "Return BUGS matching the label and author filters."
+(defun git-bug--filter-bugs (bugs &optional label author)
+  "Return BUGS matching LABEL and AUTHOR.
+A nil LABEL or AUTHOR falls back to `git-bug-status-section-label'
+or `git-bug-status-section-author'.  LABEL matches a whole label,
+case-sensitively; AUTHOR matches case-insensitively against the
+name, login and human id of the bug's author."
   (declare (side-effect-free t))
-  (cl-remove-if-not
-   (lambda (bug)
-     (and (or (null git-bug-status-section-label)
-              (member git-bug-status-section-label
-                      (alist-get 'labels bug)))
-          (or (null git-bug-status-section-author)
-              (let ((needle (downcase git-bug-status-section-author)))
-                (cl-some (lambda (field)
-                           (and (stringp field)
-                                (string-match-p
-                                 (regexp-quote needle)
-                                 (downcase field))))
-                         (git-bug--bug-author-fields bug))))))
-   bugs))
+  (let ((label (or label git-bug-status-section-label))
+        (author (or author git-bug-status-section-author)))
+    (cl-remove-if-not
+     (lambda (bug)
+       (and (or (null label)
+                (member label (alist-get 'labels bug)))
+            (or (null author)
+                (let ((needle (downcase author)))
+                  (cl-some (lambda (field)
+                             (and (stringp field)
+                                  (string-match-p
+                                   (regexp-quote needle)
+                                   (downcase field))))
+                           (git-bug--bug-author-fields bug))))))
+     bugs)))
 
 (defun git-bug--bug-time (key bug)
   "Return the timestamp of KEY in BUG, or zero."
@@ -282,26 +395,27 @@ string, so its matches share one sort text."
       (when (string-match regexp label)
         (or (and group (match-string group label)) "")))))
 
-(defun git-bug--label-rank (label)
+(defun git-bug--label-rank (label &optional rules)
   "Return the rank of LABEL, or nil when no rule matches it.
-A rank is a cons of the index of the first rule of
-`git-bug-status-section-label-order' that matches LABEL and the
-sort text that rule gives it."
+RULES defaults to `git-bug-status-section-label-order'.  A rank is
+a cons of the index of the first matching rule and the sort text
+that rule gives LABEL."
   (declare (side-effect-free t))
-  (cl-loop for rule in git-bug-status-section-label-order
+  (cl-loop for rule in (or rules git-bug-status-section-label-order)
            for index from 0
            for text = (git-bug--label-match label rule)
            when text
            return (cons index text)))
 
-(defun git-bug--best-label-rank (labels)
+(defun git-bug--best-label-rank (labels &optional rules)
   "Return the best rank among LABELS, or nil when none matches.
-The lowest rule index wins, and the smallest sort text breaks a
-tie between two labels one rule matches."
+RULES defaults to `git-bug-status-section-label-order'.  The lowest
+rule index wins, and the smallest sort text breaks a tie between
+two labels one rule matches."
   (declare (side-effect-free t))
   (let (best)
     (dolist (label labels)
-      (let ((rank (git-bug--label-rank label)))
+      (let ((rank (git-bug--label-rank label rules)))
         (when (and rank
                    (or (null best)
                        (< (car rank) (car best))
@@ -310,15 +424,15 @@ tie between two labels one rule matches."
           (setq best rank))))
     best))
 
-(defun git-bug--label-sort-key (bug)
+(defun git-bug--label-sort-key (bug &optional rules)
   "Return the label sort key of BUG as a vector.
-The vector holds the rule rank, the captured text and the edit
-time.  A bug that matches no rule takes a rank past every rule, so
-it sorts last."
+RULES defaults to `git-bug-status-section-label-order'.  The vector
+holds the rule rank, the captured text and the edit time.  A bug
+that matches no rule takes a rank past every rule, so it sorts last."
   (declare (side-effect-free t))
-  (let ((rank (git-bug--best-label-rank (alist-get 'labels bug))))
+  (let ((rank (git-bug--best-label-rank (alist-get 'labels bug) rules)))
     (vector (if rank (car rank)
-              (length git-bug-status-section-label-order))
+              (length (or rules git-bug-status-section-label-order)))
             (if rank (cdr rank) "")
             (git-bug--bug-time 'edit_time bug))))
 
@@ -333,11 +447,16 @@ text."
          (string-version-lessp (aref a 1) (aref b 1)))
         (t (> (aref a 2) (aref b 2)))))
 
-(defun git-bug--sort-bugs (bugs)
-  "Return BUGS sorted according to `git-bug-status-section-sort'."
+(defun git-bug--sort-bugs (bugs &optional sort label-order)
+  "Return BUGS sorted by SORT, ranking their labels with LABEL-ORDER.
+SORT defaults to `git-bug-status-section-sort' and LABEL-ORDER to
+`git-bug-status-section-label-order'; an unknown SORT leaves BUGS
+in their order."
   (declare (side-effect-free t))
-  (let ((sorted (copy-sequence bugs)))
-    (pcase git-bug-status-section-sort
+  (let ((sorted (copy-sequence bugs))
+        (sort (or sort git-bug-status-section-sort))
+        (rules (or label-order git-bug-status-section-label-order)))
+    (pcase sort
       ('edit-time
        (sort sorted (lambda (a b)
                       (> (git-bug--bug-time 'edit_time a)
@@ -364,7 +483,7 @@ text."
        ;; once per comparison.
        (mapcar #'cdr
                (sort (mapcar (lambda (bug)
-                               (cons (git-bug--label-sort-key bug) bug))
+                               (cons (git-bug--label-sort-key bug rules) bug))
                              sorted)
                      (lambda (a b)
                        (git-bug--label-key-lessp (car a) (car b))))))
@@ -379,54 +498,260 @@ text."
   (declare (side-effect-free t))
   (git-bug--sort-bugs (git-bug--filter-bugs bugs)))
 
+(defun git-bug--check-scope (scope)
+  "Signal `git-bug-invalid-argument' unless SCOPE is a bug scope.
+Return SCOPE, so a caller can validate before it runs git-bug."
+  (declare (side-effect-free t))
+  (unless (memq scope '(open closed all))
+    (signal 'git-bug-invalid-argument
+            (list (format "Invalid bug scope: %S" scope)
+                  :value scope)))
+  scope)
+
 (defun git-bug--select (bugs scope)
   "Return the BUGS matching SCOPE.
 BUGS is a list of bug alists as returned by `git-bug--list'.
-SCOPE is one of the symbols `open', `closed' or `all'."
-  (declare (pure t) (side-effect-free t))
-  (pcase scope
+SCOPE is one of the symbols `open', `closed' or `all'.  Signal
+`git-bug-invalid-argument' for any other value."
+  (declare (side-effect-free t))
+  (pcase (git-bug--check-scope scope)
     ('all bugs)
     ('open (cl-remove-if-not
             (lambda (bug) (equal (alist-get 'status bug) "open"))
             bugs))
     ('closed (cl-remove-if-not
               (lambda (bug) (equal (alist-get 'status bug) "closed"))
-              bugs))
-    (_ (error "Invalid bug scope: %S" scope))))
+              bugs))))
+
+;;; Data access
+
+(defun git-bug-field (object name)
+  "Return the value of OBJECT for NAME, an alist of symbol keys.
+NAME is a symbol or a string and compares case-insensitively,
+because git-bug spells keys differently in its list and its show
+answers.  Return nil when OBJECT has no such key; JSON null and
+JSON false both read as nil, so a renderer cannot tell them apart."
+  (declare (pure t) (side-effect-free t))
+  (let ((needle (downcase (if (symbolp name) (symbol-name name) name))))
+    (cdr (cl-find-if
+          (lambda (cell)
+            (and (consp cell)
+                 (symbolp (car cell))
+                 (string-equal (downcase (symbol-name (car cell)))
+                               needle)))
+          object))))
 
 (defvar git-bug--detail-cache (make-hash-table :test #'equal)
-  "Cache of bug details for each repo, id and edit time.")
+  "Cache of bug details keyed by repository, full id and edit time.
+Each value is a cons of the fetch time and the detail alist.")
 
 (defconst git-bug--detail-cache-limit 500
   "Maximum number of entries in `git-bug--detail-cache'.")
+
+(defun git-bug--repo-key (repo)
+  "Return the cache key of REPO."
+  (directory-file-name (expand-file-name repo)))
+
+(defun git-bug--cache-fresh-p (fetch-time)
+  "Return non-nil when a detail fetched at FETCH-TIME is still fresh.
+`git-bug-detail-ttl' nil keeps every answer; zero keeps none."
+  (let ((ttl git-bug-detail-ttl))
+    (or (null ttl)
+        (< (- (float-time) fetch-time) ttl))))
+
+(defun git-bug--cache-keys (repo id)
+  "Return the cache keys of REPO's bug ID.
+REPO is a `git-bug--repo-key'; ID is the full id."
+  (let (keys)
+    (maphash (lambda (key _cell)
+               (when (and (equal (nth 0 key) repo)
+                          (equal (nth 1 key) id))
+                 (push key keys)))
+             git-bug--detail-cache)
+    keys))
+
+(defun git-bug--cache-lookup (repo id edit-time)
+  "Return the freshest cached detail of REPO's ID, or nil.
+EDIT-TIME non-nil restricts the answer to that edit time; the
+lifetime of an answer comes from `git-bug-detail-ttl'."
+  (let (best)
+    (dolist (key (git-bug--cache-keys repo id))
+      (let ((cell (gethash key git-bug--detail-cache)))
+        (when (and (git-bug--cache-fresh-p (car cell))
+                   (or (null edit-time)
+                       (equal edit-time (nth 2 key)))
+                   (or (null best) (> (car cell) (car best))))
+          (setq best cell))))
+    (cdr best)))
+
+(defun git-bug--cached-detail (repo id)
+  "Return the newest cached detail of REPO's ID, however stale."
+  (let (best)
+    (dolist (key (git-bug--cache-keys repo id))
+      (let ((cell (gethash key git-bug--detail-cache)))
+        (when (or (null best) (> (car cell) (car best)))
+          (setq best cell))))
+    (cdr best)))
+
+(defun git-bug--cache-store (repo id edit-time detail)
+  "Cache in REPO the answer of bug ID at EDIT-TIME as DETAIL.
+Keep one answer per bug, and empty the whole cache at its limit."
+  (dolist (key (git-bug--cache-keys repo id))
+    (unless (equal edit-time (nth 2 key))
+      (remhash key git-bug--detail-cache)))
+  (when (>= (hash-table-count git-bug--detail-cache)
+            git-bug--detail-cache-limit)
+    (clrhash git-bug--detail-cache))
+  (puthash (list repo id edit-time) (cons (float-time) detail)
+           git-bug--detail-cache))
+
+(defun git-bug--cache-drop (repo id)
+  "Remove every cached answer of REPO's ID and return the newest."
+  (let ((old (git-bug--cached-detail repo id)))
+    (dolist (key (git-bug--cache-keys repo id))
+      (remhash key git-bug--detail-cache))
+    old))
+
+(defun git-bug--notify (event repo id old new)
+  "Report EVENT on REPO's bug ID to the package and its consumers.
+Refresh the views of the bug first, so that a consumer sees an
+updated display and a failing consumer hook cannot leave them
+stale.  OLD and NEW are the details that go away and arrive,
+either of which may be nil."
+  (let ((notification (list :type 'bug :kind 'show :event event
+                            :repo repo :id id :old old :new new)))
+    (git-bug--refresh-views notification)
+    (run-hook-with-args 'git-bug-change-functions notification)))
 
 (defun git-bug--fetch-detail (repo id)
   "Fetch from REPO the full bug ID as an alist."
   (git-bug--parse-json
    (git-bug--call repo "bug" "show" id "--format" "json")))
 
+(defun git-bug--fetch-and-cache (repo id)
+  "Fetch REPO's bug ID and cache the answer without reporting it.
+REPO is a `git-bug--repo-key'.  Signal the conditions of
+`git-bug--fetch-detail'."
+  (let* ((detail (git-bug--fetch-detail repo id))
+         (full (or (git-bug-field detail 'id) id)))
+    (git-bug--cache-store repo full (git-bug--bug-edit-time detail) detail)
+    detail))
+
+(defun git-bug--refresh-detail (repo id event &optional always)
+  "Fetch REPO's bug ID, replace its cached answer and report EVENT.
+EVENT is `create', `change' or nil.  Report a `create' when the bug
+had no cached answer, a `change' when the fetched answer differs
+from the cached one, and nothing for nil.  ALWAYS reports EVENT even
+without a cached answer, which is what a write wants: the caller
+knows that storage changed.  Signal the conditions of
+`git-bug--fetch-detail'."
+  (let* ((repo (git-bug--repo-key repo))
+         (detail (git-bug--fetch-detail repo id))
+         (full (or (git-bug-field detail 'id) id))
+         (old (git-bug--cached-detail repo full)))
+    (git-bug--cache-store repo full (git-bug--bug-edit-time detail) detail)
+    (when (or always
+              (pcase event
+                ('create (null old))
+                ('change (and old (not (equal old detail))))
+                (_ nil)))
+      (git-bug--notify event repo full old detail))
+    detail))
+
 (defun git-bug--detail (repo id &optional edit-time force)
   "Return from REPO the full bug ID as an alist.
 Unlike the entries returned by `git-bug--list', the result includes
 the labels and the comments; comment number zero is the bug
-description.  Cache the result when EDIT-TIME is non-nil, unless
-FORCE is non-nil."
-  (let ((key (list repo id edit-time)))
-    (if (and edit-time (not force))
-        (or (gethash key git-bug--detail-cache)
-            (progn
-              (when (>= (hash-table-count git-bug--detail-cache)
-                        git-bug--detail-cache-limit)
-                (clrhash git-bug--detail-cache))
-              (puthash key (git-bug--fetch-detail repo id)
-                       git-bug--detail-cache)))
-      (git-bug--fetch-detail repo id))))
+description.  With EDIT-TIME, reuse only an answer cached for that
+edit time; without it, any answer `git-bug-detail-ttl' keeps fresh
+will do.  FORCE asks git-bug again and reports a changed answer
+through `git-bug-change-functions'."
+  (let* ((repo (git-bug--repo-key repo))
+         (cached (unless force (git-bug--cache-lookup repo id edit-time))))
+    (or cached
+        (if force
+            (git-bug--refresh-detail repo id 'change)
+          (git-bug--fetch-and-cache repo id)))))
+
+;;;###autoload
+(defun git-bug-get (repo id &optional force)
+  "Return from REPO the full bug ID as an alist.
+ID is the full id; a short id works as long as git-bug resolves it,
+and the answer is cached under the full id anyway.  Unlike
+`git-bug-list', the answer carries `labels' and a `comments' list
+whose first element is the description.
+Reuse a cached answer while `git-bug-detail-ttl' allows it, unless
+FORCE is non-nil; then ask git-bug and report a changed answer
+through `git-bug-change-functions'.  Signal `git-bug-call-failed'
+when git-bug fails, `git-bug-missing-program' when the executable
+is absent and `git-bug-invalid-output' when its answer is not JSON."
+  (git-bug--detail repo id nil force))
+
+;;;###autoload
+(defun git-bug-list (repo &optional filters)
+  "Return the bugs of REPO, filtered, sorted and scoped.
+REPO is a directory name.  The result keeps the shape of the
+`git-bug bug --format json' answers, where `comments' is a count
+rather than a list; call `git-bug-get' for one full bug.
+FILTERS is a plist, and a nil value keeps the customizable default:
+
+  :scope        `open' by default, or `closed' or `all'
+  :label        a label that every returned bug carries
+  :author       a name, login or human id the author matches
+  :sort         `edit-time', `create-time', `title', `status',
+                `label' or `id'
+  :label-order  rules ranking bugs for the `label' sort order
+
+Signal `git-bug-call-failed' when git-bug fails,
+`git-bug-invalid-output' when its answer is not JSON and
+`git-bug-invalid-argument' for an unknown scope, before it runs
+git-bug at all."
+  (let ((scope (git-bug--check-scope
+                (or (plist-get filters :scope)
+                    git-bug-status-section-scope)))
+        (label (plist-get filters :label))
+        (author (plist-get filters :author))
+        (sort (plist-get filters :sort))
+        (order (plist-get filters :label-order)))
+    (git-bug--select
+     (git-bug--sort-bugs (git-bug--filter-bugs (git-bug--list repo)
+                                               label author)
+                         sort order)
+     scope)))
+
+;;;###autoload
+(defun git-bug-forget (&optional repo id)
+  "Drop cached bug details.
+With neither REPO nor ID, forget every repository.  With REPO only,
+forget every bug of REPO; with REPO and ID, forget that one bug.
+ID is a full id, or the `human_id' that a heading shows.
+Run `git-bug-change-functions' once per forgotten bug with :event
+`invalidate', :old the answer that goes away and :new nil.  An
+`invalidate' carries no new answer, so a view of that bug keeps its
+text and re-reads storage on its next refresh."
+  (let ((key (and repo (git-bug--repo-key repo)))
+        pairs)
+    (maphash (lambda (entry cell)
+               (when (and (or (null key) (equal (nth 0 entry) key))
+                          (or (null id)
+                              (equal (nth 1 entry) id)
+                              (equal id (git-bug-field (cdr cell) 'human_id))))
+                 (push (list (nth 0 entry) (nth 1 entry)) pairs)))
+             git-bug--detail-cache)
+    (dolist (pair (delete-dups pairs))
+      (let ((old (git-bug--cache-drop (car pair) (cadr pair))))
+        (when old
+          (git-bug--notify 'invalidate (car pair) (cadr pair) old nil))))
+    nil))
 
 (defun git-bug--set-status (repo id status)
   "Set in REPO the status of bug ID to STATUS.
 STATUS is either \"open\" or \"close\", matching the git-bug
-command line."
-  (git-bug--call repo "bug" "status" status id))
+command line.  Report the new answer through
+`git-bug-change-functions' and return it, so that a caller need not
+fetch it again."
+  (git-bug--call repo "bug" "status" status id)
+  (git-bug--refresh-detail repo id 'change t))
 
 (defun git-bug--markdown-ts-ready-p ()
   "Return non-nil when markdown fontification is available.
@@ -622,23 +947,29 @@ The buffer reads its text from git-bug rather than from a file, so
   (setq-local revert-buffer-function #'git-bug--revert-buffer)
   (visual-line-mode 1))
 
+(defun git-bug--render-buffer (detail)
+  "Replace the current buffer's text with DETAIL.
+Also remember the status, edit time and short id of DETAIL."
+  (setq-local git-bug--buffer-status (git-bug-field detail 'status))
+  (setq-local git-bug--buffer-edit-time (git-bug--bug-edit-time detail))
+  (when-let* ((human (git-bug-field detail 'human_id)))
+    (setq-local git-bug--buffer-human-id human))
+  (let ((inhibit-read-only t))
+    (erase-buffer)
+    (git-bug--insert-bug-buffer detail)
+    (goto-char (point-min))))
+
 (defun git-bug-refresh-buffer (&optional force)
   "Refresh the current `git-bug-mode' buffer from git-bug.
-With FORCE, ignore the detail cache."
+With FORCE, ignore the cached detail."
   (interactive "P")
   (unless (derived-mode-p 'git-bug-mode)
     (user-error "Not a git-bug buffer"))
-  (let ((detail (git-bug--detail git-bug--buffer-repo
-                                 git-bug--buffer-id
-                                 git-bug--buffer-edit-time
-                                 force)))
-    (setq-local git-bug--buffer-status (alist-get 'status detail))
-    (setq-local git-bug--buffer-edit-time
-                (alist-get 'timestamp (alist-get 'edit_time detail)))
-    (let ((inhibit-read-only t))
-      (erase-buffer)
-      (git-bug--insert-bug-buffer detail)
-      (goto-char (point-min)))))
+  (git-bug--render-buffer
+   (git-bug--detail git-bug--buffer-repo
+                    git-bug--buffer-id
+                    git-bug--buffer-edit-time
+                    force)))
 
 (defun git-bug--revert-buffer (&rest _arguments)
   "Re-read the bug of the current buffer from git-bug.
@@ -651,28 +982,55 @@ the detail cache, because a revert reaches the storage again."
   (interactive)
   (unless (derived-mode-p 'git-bug-mode)
     (user-error "Not a git-bug buffer"))
-  (git-bug--set-status git-bug--buffer-repo
-                       git-bug--buffer-id
-                       (if (equal git-bug--buffer-status "open")
-                           "close"
-                         "open"))
-  (git-bug-refresh-buffer t))
+  ;; The write reports the new answer, which is the one this buffer
+  ;; shows; fetching it again would cost a second git-bug call.
+  (git-bug--render-buffer
+   (git-bug--set-status git-bug--buffer-repo
+                        git-bug--buffer-id
+                        (if (equal git-bug--buffer-status "open")
+                            "close"
+                          "open"))))
+
+(defun git-bug--viewer-name (human id)
+  "Return the buffer name of a viewer for HUMAN or, failing that, ID."
+  (format "*git-bug: %s*" (or human id)))
+
+;;;###autoload
+(defun git-bug-buffer (repo id &optional mode)
+  "Return a buffer showing REPO's bug ID, without displaying it.
+Reuse the buffer of that bug when one is open, and leave it
+unselected.  MODE defaults to `git-bug-mode' and must derive from
+it.  Signal the conditions of `git-bug-get', before a buffer
+exists, and a `user-error' for a MODE that does not derive from
+`git-bug-mode', also before a buffer exists."
+  (let ((mode (or mode 'git-bug-mode)))
+    (unless (provided-mode-derived-p mode 'git-bug-mode)
+      (user-error "%S is not a mode derived from `git-bug-mode'" mode))
+    (let* ((detail (git-bug-get repo id))
+           (human (git-bug-field detail 'human_id))
+           (buffer (get-buffer-create (git-bug--viewer-name human id))))
+      (with-current-buffer buffer
+        (unless (derived-mode-p 'git-bug-mode)
+          (funcall mode))
+        (setq-local default-directory (file-name-as-directory repo)
+                    git-bug--buffer-repo (git-bug--repo-key repo)
+                    git-bug--buffer-id (or (git-bug-field detail 'id) id)
+                    git-bug--buffer-human-id human)
+        (git-bug--render-buffer detail))
+      buffer)))
+
+;;;###autoload
+(defun git-bug-show (repo id &optional mode)
+  "Show REPO's bug ID in a `git-bug-mode' buffer and select it.
+MODE defaults to `git-bug-mode'; see `git-bug-buffer' for the
+arguments."
+  (pop-to-buffer (git-bug-buffer repo id mode)))
 
 (defun git-bug-show-bug (repo bug)
-  "Show REPO's BUG in a dedicated `git-bug-mode' buffer."
-  (let* ((id (alist-get 'id bug))
-         (human (alist-get 'human_id bug))
-         (buffer (get-buffer-create
-                  (format "*git-bug: %s*" (or human id)))))
-    (with-current-buffer buffer
-      (git-bug-mode)
-      (setq-local default-directory (file-name-as-directory repo))
-      (setq-local git-bug--buffer-repo repo
-                  git-bug--buffer-id id
-                  git-bug--buffer-human-id human
-                  git-bug--buffer-edit-time (git-bug--bug-edit-time bug))
-      (git-bug-refresh-buffer))
-    (pop-to-buffer buffer)))
+  "Show REPO's BUG in a dedicated `git-bug-mode' buffer.
+BUG is a bug alist as `git-bug-list' returns it; use `git-bug-show'
+to open a bug by id."
+  (git-bug-show repo (git-bug-field bug 'id)))
 
 (defun git-bug-show-bug-at-point ()
   "Show the bug at point in a dedicated buffer."
@@ -743,11 +1101,15 @@ the detail cache, because a revert reaches the storage again."
 
 (defun git-bug--create-bug (repo title body)
   "Create a bug in REPO with TITLE and BODY and return its short id.
-Git-bug takes the title from the first line of the message."
+Git-bug takes the title from the first line of the message, so the
+body starts after the blank line that follows it.  Report the new
+bug through `git-bug-change-functions'."
   (let ((out (git-bug--call-with-input
               repo (concat (git-bug--clean-title title) "\n\n" body)
               "bug" "new" "--non-interactive" "-F" "-")))
-    (car (split-string out))))
+    (let ((id (car (split-string out))))
+      (git-bug--refresh-detail repo id 'create)
+      id)))
 
 ;;;###autoload
 (defun git-bug-new-bug ()
@@ -763,9 +1125,7 @@ Git-bug takes the title from the first line of the message."
        (format "New bug: %s" title)
        ""
        (lambda (body)
-         (let ((id (git-bug--create-bug repo title body)))
-           (git-bug--refresh-after-write repo)
-           (message "Created bug %s" id)))))))
+         (message "Created bug %s" (git-bug--create-bug repo title body)))))))
 
 (defun git-bug--current-bug ()
   "Return (REPO ID HUMAN-ID) for the bug at point."
@@ -782,29 +1142,48 @@ Git-bug takes the title from the first line of the message."
    (t (user-error "No bug at point"))))
 
 (defun git-bug--add-comment (repo id body)
-  "Add to REPO's bug ID the comment BODY."
+  "Add to REPO's bug ID the comment BODY.
+Report the new answer through `git-bug-change-functions'."
   (git-bug--call-with-input
-   repo body "bug" "comment" "new" id "--non-interactive" "-F" "-"))
+   repo body "bug" "comment" "new" id "--non-interactive" "-F" "-")
+  (git-bug--refresh-detail repo id 'change t))
 
 (defun git-bug--set-labels (repo id labels)
-  "Set in REPO the labels of bug ID to LABELS."
-  (let* ((detail (git-bug--detail repo id))
+  "Set in REPO the labels of bug ID to LABELS.
+Read the current labels from git-bug rather than from the cache,
+because the write depends on them, and report the new answer through
+`git-bug-change-functions'."
+  (let* ((key (git-bug--repo-key repo))
+         (detail (git-bug--fetch-and-cache key id))
          (current (alist-get 'labels detail))
          (added (cl-set-difference labels current :test #'equal))
          (removed (cl-set-difference current labels :test #'equal)))
     (when added
-      (apply #'git-bug--call repo "bug" "label" "new" id added))
+      (apply #'git-bug--call key "bug" "label" "new" id added))
     (when removed
-      (apply #'git-bug--call repo "bug" "label" "rm" id removed))))
+      (apply #'git-bug--call key "bug" "label" "rm" id removed))
+    (git-bug--refresh-detail key id 'change t)))
 
-(defun git-bug--after-bug-change (repo human-id)
-  "Refresh after a write to REPO the status section and viewer of HUMAN-ID."
-  (git-bug--refresh-after-write repo)
-  (when-let* ((buffer (get-buffer (format "*git-bug: %s*" human-id)))
-              ((buffer-live-p buffer)))
-    (with-current-buffer buffer
-      (when (derived-mode-p 'git-bug-mode)
-        (git-bug-refresh-buffer t)))))
+(defun git-bug--refresh-views (notification)
+  "Refresh the views of the bug that NOTIFICATION reports.
+Render the answer the notification carries, so a write costs no
+second fetch.  An `invalidate' carries no answer at all, so a view of
+that bug keeps its text until its next refresh.  Leave the current
+buffer alone: a viewer that is mid-refresh renders itself from the
+answer it already fetched."
+  (let ((repo (plist-get notification :repo))
+        (id (plist-get notification :id))
+        (new (plist-get notification :new)))
+    (when new
+      (dolist (buffer (buffer-list))
+        (when (and (not (eq buffer (current-buffer)))
+                   (with-current-buffer buffer
+                     (and (derived-mode-p 'git-bug-mode)
+                          (equal git-bug--buffer-repo repo)
+                          (equal git-bug--buffer-id id))))
+          (with-current-buffer buffer
+            (git-bug--render-buffer new))))
+      (git-bug--refresh-after-write repo))))
 
 ;;;###autoload
 (defun git-bug-add-comment-at-point ()
@@ -815,14 +1194,13 @@ Git-bug takes the title from the first line of the message."
      (format "Comment on %s" human)
      ""
      (lambda (body)
-       (git-bug--add-comment repo id body)
-       (git-bug--after-bug-change repo human)))))
+       (git-bug--add-comment repo id body)))))
 
 ;;;###autoload
 (defun git-bug-edit-labels-at-point ()
   "Edit the labels of the bug at point."
   (interactive)
-  (pcase-let ((`(,repo ,id ,human) (git-bug--current-bug)))
+  (pcase-let ((`(,repo ,id ,_) (git-bug--current-bug)))
     (let* ((detail (git-bug--detail repo id))
            (current (git-bug--sorted-labels
                      (copy-sequence (alist-get 'labels detail))))
@@ -832,8 +1210,7 @@ Git-bug takes the title from the first line of the message."
       (git-bug--set-labels
        repo id
        (cl-remove-if #'string-empty-p
-                     (mapcar #'string-trim value)))
-      (git-bug--after-bug-change repo human))))
+                     (mapcar #'string-trim value))))))
 
 (defun git-bug--comment-count (bug)
   "Return the number of replies in BUG."
@@ -901,20 +1278,22 @@ up zero wide and are left out when the headings are rendered."
 
 (defun git-bug--pad-cell (text face width align)
   "Return TEXT fontified with FACE and padded to WIDTH.
-ALIGN is either the symbol `left' or `right'.  The padding stays
-unfontified, so it never carries the color of the cell."
+A nil FACE leaves TEXT plain.  ALIGN is either the symbol `left' or
+`right'.  The padding stays unfontified, so it never carries the
+color of the cell."
   (declare (pure t) (side-effect-free t))
-  (let* ((body (propertize text 'font-lock-face face))
+  (let* ((body (if face (propertize text 'font-lock-face face) text))
          (padding (max 0 (- width (length text)))))
     (if (eq align 'right)
         (concat (make-string padding ?\s) body)
       (concat body (make-string padding ?\s)))))
 
-(defun git-bug--heading-string (bug widths)
+(defun git-bug--heading-string (bug widths &optional faces)
   "Return the heading line of BUG, laid out with column WIDTHS.
-WIDTHS is an alist as `git-bug--heading-widths' returns it.  Cells
-of a zero-wide column are left out, so a list of only open bugs
-spends no room on the width of \"closed\"."
+A nil FACES leaves the line without faces.  WIDTHS is an alist as
+`git-bug--heading-widths' returns it.  Cells of a zero-wide column
+are left out, so a list of only open bugs spends no room on the
+width of \"closed\"."
   (let* ((cells (git-bug--heading-cells bug))
          (columns (cl-remove-if-not (lambda (column)
                                       (> (alist-get column widths) 0))
@@ -923,12 +1302,31 @@ spends no room on the width of \"closed\"."
                           (let ((cell (alist-get column cells)))
                             (git-bug--pad-cell
                              (or (car cell) "")
-                             (cadr cell)
+                             (and faces (cadr cell))
                              (alist-get column widths)
                              (alist-get column
                                         git-bug--heading-column-alignment))))
                         columns)))
     (string-trim-right (string-join parts " "))))
+
+;;;###autoload
+(defun git-bug-format-bug (bug &optional faces)
+  "Return the heading line of BUG as text.
+The heading carries the short id, status, title, labels, reply count
+and age.  FACES non-nil keeps the Magit faces of the status section;
+the default is plain text, for export.  Use
+`git-bug-format-bug-list' to line up several bugs in columns."
+  (git-bug--heading-string bug (git-bug--heading-widths (list bug)) faces))
+
+;;;###autoload
+(defun git-bug-format-bug-list (bugs &optional faces)
+  "Return the heading lines of BUGS as text, one per line.
+Share the column widths of the whole list, so the cells of every
+line start at the same offset.  FACES non-nil keeps the faces of the
+status section; the default is plain text."
+  (let ((widths (git-bug--heading-widths bugs)))
+    (mapconcat (lambda (bug) (git-bug--heading-string bug widths faces))
+               bugs "\n")))
 
 (defun git-bug--refresh-current-status ()
   "Refresh the Magit status buffer for the current context."
@@ -1021,7 +1419,7 @@ WIDTHS are the shared column widths of the surrounding list, see
     (let ((bug-id (alist-get 'id bug)))
       ;; Note the `font-lock-face' property, not `face': font-lock
       ;; refontification strips `face', leaving the ids unfontified.
-      (magit-insert-heading (git-bug--heading-string bug widths))
+      (magit-insert-heading (git-bug--heading-string bug widths t))
       ;; Magit runs this body only when the user expands the section.
       ;; Fetching details for every collapsed bug blocks `magit-status'.
       (magit-insert-section-body
@@ -1137,17 +1535,16 @@ copy the bug ref."
 
 ;;;###autoload
 (defun git-bug-toggle-status-at-point ()
-  "Toggle the open/closed status of the bug at point."
+  "Toggle the open/closed status of the bug at point.
+The status section and any viewer of the bug refresh themselves,
+then `git-bug-change-functions' runs."
   (interactive)
   (if-let* ((bug (magit-section-value-if 'git-bug-bug-section)))
-      (progn
-        (git-bug--set-status (magit-toplevel)
-                             (alist-get 'id bug)
-                             (if (equal (alist-get 'status bug) "open")
-                                 "close"
-                               "open"))
-        (when (derived-mode-p 'magit-mode)
-          (magit-refresh)))
+      (git-bug--set-status (magit-toplevel)
+                           (alist-get 'id bug)
+                           (if (equal (alist-get 'status bug) "open")
+                               "close"
+                             "open"))
     (user-error "No bug at point")))
 
 (defvar-keymap git-bug-bug-section-map

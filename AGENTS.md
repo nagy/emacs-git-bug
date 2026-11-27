@@ -9,7 +9,8 @@ License: AGPL-3.0-or-later.
 ## Layout
 
 - `git-bug.el` — the package: sections, commands, CLI wrapper, viewer and compose
-  modes.
+  modes, and the public library entry points listed in the README `* Library`
+  section.
 - `test/git-bug-test.el` — ERT suite. Most tests drive the real `git-bug`
   binary in a throwaway repo; the heading layout test renders fabricated bug
   lists, so column alignment is asserted without a repository.
@@ -39,10 +40,15 @@ License: AGPL-3.0-or-later.
 - Use full bug ids for CLI calls. Keep `human_id` for display and copying.
 - Load details through `magit-insert-section-body`. Never run `git-bug bug show`
   for a collapsed section.
-- Cache details by repository, full id and edit time. Force a fetch after writes
-  and on explicit refresh.
+- Cache details by repository, full id and edit time, and serve them while
+  `git-bug-detail-ttl` allows. Report every real change through
+  `git-bug-change-functions`; a write refreshes its own cache entry first, so a
+  fetch that returns cached content stays silent. Refresh the package's own
+  views before running the hook, so replacing the hook cannot stop a write from
+  updating them.
 - Route subprocesses through `git-bug--call-with-input` for quiet git settings,
-  UTF-8 coding and stdin support.
+  UTF-8 coding and stdin support. Signal a subtype of `git-bug-error`, with the
+  call context attached, rather than a generic error.
 - Put faces on `font-lock-face`, never on `face`. Font-lock strips `face` on
   refontification. Bug bodies are fontified with the builtin `markdown-ts-mode`.
 - Keep Markdown fontification sandboxed: no native code blocks, inline images,
@@ -51,6 +57,14 @@ License: AGPL-3.0-or-later.
 ## Conventions
 
 - Prefix `git-bug-` for commands and `git-bug--` for internals.
+- The bare-name entries of the README `* Library` section are the public
+  surface: `git-bug-list`, `git-bug-get`, `git-bug-field`, `git-bug-format-bug`,
+  `git-bug-format-bug-list`, `git-bug-buffer`, `git-bug-show`,
+  `git-bug-forget`, `git-bug-error-data`. Everything else stays `git-bug--`.
+  Keep the Library section and the `git-bug-tests-library-*` tests in step with
+  every new entry point.
+- Prefer a pure renderer returning text over a function that inserts into the
+  current buffer; a string must not need a buffer to build.
 - Docstrings: imperative function summaries, noun-phrase variable summaries,
   `When non-nil, ...' flag summaries. Keep summary lines under 80 columns.
 

@@ -343,7 +343,6 @@ OFFSETS are the column positions to compare."
   "Pure helpers tell the byte compiler about their behavior."
   (dolist (fn '(git-bug--bug-author-fields
                 git-bug--bug-time
-                git-bug--select
                 git-bug--author-display
                 git-bug--clean-title
                 git-bug--sorted-labels
@@ -356,7 +355,9 @@ OFFSETS are the column positions to compare."
                 git-bug--pad-cell))
     (should (function-get fn 'pure))
     (should (function-get fn 'side-effect-free)))
-  (dolist (fn '(git-bug--filter-bugs
+  (dolist (fn '(git-bug--select
+                git-bug--check-scope
+                git-bug--filter-bugs
                 git-bug--sort-bugs
                 git-bug--label-rank
                 git-bug--best-label-rank
@@ -364,8 +365,9 @@ OFFSETS are the column positions to compare."
                 git-bug--displayed-bugs
                 git-bug--heading-cells
                 git-bug--heading-widths))
-    ;; These read the clock or customizable variables, so their
-    ;; result can change without an argument change.
+    ;; These read the clock or customizable variables, or signal on a
+    ;; bad argument, so their result can change without an argument
+    ;; change and they are not safe to evaluate at compile time.
     (should-not (function-get fn 'pure))
     (should (function-get fn 'side-effect-free))))
 
@@ -554,7 +556,7 @@ OFFSETS are the column positions to compare."
     (cl-letf (((symbol-function 'git-bug--fetch-detail)
                (lambda (&rest _)
                  (cl-incf calls)
-                 '((id . "x")))))
+                 '((id . "x") (edit_time (timestamp . 10))))))
       (git-bug--detail "/repo" "x" 10)
       (git-bug--detail "/repo" "x" 10)
       (should (= calls 1))
@@ -837,8 +839,9 @@ OFFSETS are the column positions to compare."
                                             (buffer-string)))
                 (git-bug--add-comment repo (alist-get 'id bug)
                                       "Late comment\n")
-                ;; The detail cache holds the text from before the
-                ;; comment, so only a forced fetch shows it.
+                ;; The comment refreshed the cache and the viewer, but
+                ;; the buffer still shows the text from before it, since
+                ;; the write ran in this buffer.
                 (revert-buffer-quick)
                 (should (string-match-p "Late comment"
                                         (buffer-string))))))
@@ -988,16 +991,349 @@ OFFSETS are the column positions to compare."
       (delete-directory repo t))))
 
 (ert-deftest git-bug-tests-call-error-type ()
-  "CLI failures signal `git-bug-error'."
+  "CLI failures signal `git-bug-call-failed' with the call context."
   (let* ((repo (file-name-as-directory
                 (make-temp-file "git-bug-tests" t)))
          (script (git-bug-tests--fake-program
                   "printf 'boom\\n' >&2\nexit 3\n")))
     (unwind-protect
-        (let ((git-bug-program script))
-          (should-error (git-bug--call repo) :type 'git-bug-error))
+        (let* ((git-bug-program script)
+               (err (should-error (git-bug--call repo "bug")
+                                  :type 'git-bug-error))
+               (data (git-bug-error-data err)))
+          (should (eq (car err) 'git-bug-call-failed))
+          (should (equal (plist-get data :exit) 3))
+          (should (equal (plist-get data :stderr) "boom"))
+          (should (plist-get data :args)))
       (delete-file script)
       (delete-directory repo t))))
+
+(ert-deftest git-bug-tests-call-missing-program ()
+  "A missing git-bug binary is not a generic file error."
+  (let* ((repo (file-name-as-directory
+                (make-temp-file "git-bug-tests" t)))
+         (git-bug-program "/nonexistent/git-bug"))
+    (unwind-protect
+        (let* ((err (should-error (git-bug--call repo)))
+               (data (git-bug-error-data err)))
+          (should (eq (car err) 'git-bug-missing-program))
+          (should (equal (plist-get data :program) "/nonexistent/git-bug")))
+      (delete-directory repo t))))
+
+(ert-deftest git-bug-tests-call-missing-repo ()
+  "A directory that does not exist is a bad argument, not a bad program."
+  (let* ((err (should-error (git-bug--call "/nonexistent/git-bug-repo")))
+         (data (git-bug-error-data err)))
+    (should (eq (car err) 'git-bug-invalid-argument))
+    (should (equal (plist-get data :value) "/nonexistent/git-bug-repo"))))
+
+(ert-deftest git-bug-tests-call-invalid-json ()
+  "Unparseable output is its own condition."
+  (let ((err (should-error (git-bug--parse-json "{not json"))))
+    (should (eq (car err) 'git-bug-invalid-output))))
+
+;;; Library surface
+
+(ert-deftest git-bug-tests-library-surface ()
+  "Every documented entry point exists and subclasses `git-bug-error'."
+  (dolist (fn '(git-bug-list git-bug-get git-bug-field
+                git-bug-format-bug git-bug-format-bug-list
+                git-bug-buffer git-bug-show git-bug-forget
+                git-bug-error-data))
+    (should (fboundp fn)))
+  (dolist (condition '(git-bug-call-failed git-bug-missing-program
+                       git-bug-invalid-output git-bug-invalid-argument))
+    (should (memq condition (get condition 'error-conditions)))
+    (should (memq 'git-bug-error (get condition 'error-conditions)))))
+
+(ert-deftest git-bug-tests-library-field ()
+  "Fields read by name, whatever case an answer spells them in."
+  (let ((bug '((id . "abc") (HUMAN_ID . "abc1234") (labels . nil))))
+    (should (equal (git-bug-field bug 'id) "abc"))
+    (should (equal (git-bug-field bug 'human_id) "abc1234"))
+    (should (equal (git-bug-field bug "Human_Id") "abc1234"))
+    (should-not (git-bug-field bug 'missing))
+    (should-not (git-bug-field nil 'id))))
+
+(ert-deftest git-bug-tests-library-list ()
+  "The library list honors its filters and agrees with the section."
+  (git-bug-tests--with-repo repo
+    (let ((one (git-bug-tests--new-bug repo "Alpha"))
+          (two (git-bug-tests--new-bug repo "Beta")))
+      (git-bug--call repo "bug" "label" "new" one "ui")
+      (git-bug--call repo "bug" "status" "close" two)
+      (let ((titles (lambda (bugs)
+                      (mapcar (lambda (bug) (git-bug-field bug 'title))
+                              bugs))))
+        (should (equal (funcall titles (git-bug-list repo)) '("Alpha")))
+        (should (= (length (git-bug-list repo '(:scope all))) 2))
+        (should (equal (funcall titles
+                                (git-bug-list repo '(:scope all :sort title)))
+                       '("Alpha" "Beta")))
+        (should (equal (funcall titles (git-bug-list repo '(:scope all :label "ui")))
+                       '("Alpha")))
+        (should (equal (funcall titles
+                                (git-bug-list repo
+                                              '(:scope all :author "test user"
+                                                :sort title)))
+                       '("Alpha" "Beta"))))
+      ;; The defaults match what the status section shows.
+      (should (equal (git-bug-list repo)
+                     (git-bug--select
+                      (git-bug--displayed-bugs (git-bug--list repo))
+                      git-bug-status-section-scope))))))
+
+(ert-deftest git-bug-tests-library-list-invalid-scope ()
+  "An unknown scope is a package condition, not a bare error."
+  (let ((err (should-error (git-bug--select nil 'bogus))))
+    (should (eq (car err) 'git-bug-invalid-argument))
+    (should (eq (plist-get (git-bug-error-data err) :value) 'bogus))))
+
+(ert-deftest git-bug-tests-library-get ()
+  "Get returns one full bug, by full or short id."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Alpha" "Body text.\n"))
+           (full (git-bug-field (car (git-bug--list repo)) 'id))
+           (detail (git-bug-get repo full)))
+      (should (equal (git-bug-field detail 'id) full))
+      (should (listp (git-bug-field detail 'comments)))
+      (should (string-match-p "Body text"
+                              (git-bug-field (car (git-bug-field detail 'comments))
+                                             'message)))
+      ;; A short id resolves, and the answer caches under the full id.
+      (should (equal (git-bug-field (git-bug-get repo short) 'id) full))
+      (should (git-bug--cached-detail (git-bug--repo-key repo) full))
+      (should-not (git-bug--cached-detail (git-bug--repo-key repo) short))
+      ;; An unknown id is a failed call, with the exit status attached.
+      (let* ((err (should-error (git-bug-get repo (make-string 40 ?0))))
+             (data (git-bug-error-data err)))
+        (should (eq (car err) 'git-bug-call-failed))
+        (should (equal (plist-get data :exit) 1))
+        (should (plist-get data :stderr))))))
+
+(ert-deftest git-bug-tests-library-ttl ()
+  "The cache honors `git-bug-detail-ttl'."
+  (clrhash git-bug--detail-cache)
+  (let ((calls 0)
+        (git-bug-change-functions nil))
+    (cl-letf (((symbol-function 'git-bug--fetch-detail)
+               (lambda (&rest _)
+                 (cl-incf calls)
+                 '((id . "x") (edit_time (timestamp . 1))))))
+      (let ((git-bug-detail-ttl nil))
+        (git-bug-get "/repo" "x")
+        (git-bug-get "/repo" "x")
+        (should (= calls 1)))
+      (let ((git-bug-detail-ttl 0))
+        (git-bug-get "/repo" "x")
+        (should (= calls 2)))
+      (let ((git-bug-detail-ttl 3600))
+        (git-bug-get "/repo" "x")
+        (should (= calls 2))))))
+
+(ert-deftest git-bug-tests-library-forget ()
+  "Forget drops cached bugs by scope and reports what goes away."
+  (clrhash git-bug--detail-cache)
+  (let* (events
+         (git-bug-change-functions
+          (list (lambda (event) (push event events)))))
+    (cl-letf (((symbol-function 'git-bug--fetch-detail)
+               (lambda (repo _id)
+                 (list (cons 'id "x") (cons 'title repo)
+                       (cons 'edit_time (list (cons 'timestamp 1)))))))
+      (git-bug-get "/one" "x")
+      (git-bug-get "/two" "x")
+      (should (= (hash-table-count git-bug--detail-cache) 2))
+      (git-bug-forget "/one")
+      (should (= (hash-table-count git-bug--detail-cache) 1))
+      (should (= (length events) 1))
+      (let ((event (car events)))
+        (should (eq (plist-get event :event) 'invalidate))
+        (should (equal (plist-get event :repo) "/one"))
+        (should (equal (plist-get event :id) "x"))
+        (should (git-bug-field (plist-get event :old) 'title))
+        (should-not (plist-get event :new)))
+      (git-bug-forget)
+      (should (zerop (hash-table-count git-bug--detail-cache)))
+      (should (= (length events) 2)))))
+
+(ert-deftest git-bug-tests-library-forget-human-id ()
+  "Forget accepts the short id that a heading shows."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Alpha"))
+           (full (git-bug-field (car (git-bug--list repo)) 'id)))
+      (git-bug-get repo full)
+      (should (git-bug--cached-detail (git-bug--repo-key repo) full))
+      (git-bug-forget repo short)
+      (should-not (git-bug--cached-detail (git-bug--repo-key repo) full)))))
+
+(ert-deftest git-bug-tests-library-forget-keeps-dropped ()
+  "Forget drops the entry, and a viewer does not fetch it back."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Alpha"))
+           (full (git-bug-field (car (git-bug--list repo)) 'id))
+           (buffer (git-bug-buffer repo full)))
+      (unwind-protect
+          (progn
+            (should (git-bug--cached-detail (git-bug--repo-key repo) full))
+            (git-bug-forget repo short)
+            (should-not (git-bug--cached-detail (git-bug--repo-key repo) full))
+            ;; The view keeps its text and re-reads storage later.
+            (with-current-buffer buffer
+              (should (string-match-p "Alpha" (buffer-string)))
+              (git-bug-refresh-buffer)
+              (should (string-match-p "Alpha" (buffer-string))))
+            (should (git-bug--cached-detail (git-bug--repo-key repo) full)))
+        (kill-buffer buffer)))))
+
+(ert-deftest git-bug-tests-library-change-hook ()
+  "A write reports one change event; an equal fetch reports none."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Alpha")
+    (let* ((full (git-bug-field (car (git-bug--list repo)) 'id))
+           events)
+      (git-bug-get repo full)
+      (let ((git-bug-change-functions
+             (list (lambda (event) (push event events)))))
+        (git-bug--set-status repo full "close")
+        (should (= (length events) 1))
+        (let ((event (car events)))
+          (should (eq (plist-get event :event) 'change))
+          (should (eq (plist-get event :type) 'bug))
+          (should (eq (plist-get event :kind) 'show))
+          (should (equal (plist-get event :repo) (git-bug--repo-key repo)))
+          (should (equal (plist-get event :id) full))
+          (should (equal (git-bug-field (plist-get event :old) 'status) "open"))
+          (should (equal (git-bug-field (plist-get event :new) 'status) "closed")))
+        (git-bug-get repo full t)
+        (should (= (length events) 1))
+        ;; A write reports a change even without a cached answer.
+        (git-bug-forget repo full)
+        (setq events nil)
+        (git-bug--set-status repo full "open")
+        (should (= (length events) 1))
+        (should-not (plist-get (car events) :old))))))
+
+(ert-deftest git-bug-tests-library-create-event ()
+  "Creating a bug reports a create event."
+  (git-bug-tests--with-repo repo
+    (let* (events
+           (git-bug-change-functions
+            (list (lambda (event) (push event events)))))
+      (git-bug--create-bug repo "Fresh" "Body.\n")
+      (should (= (length events) 1))
+      (should (eq (plist-get (car events) :event) 'create))
+      (should-not (plist-get (car events) :old))
+      (should (equal (git-bug-field (plist-get (car events) :new) 'title)
+                     "Fresh")))))
+
+(ert-deftest git-bug-tests-library-buffer ()
+  "The viewer builds a buffer without displaying it."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Alpha" "Body.\n"))
+           (full (git-bug-field (car (git-bug--list repo)) 'id)))
+      (unwind-protect
+          (with-temp-buffer
+            (let ((here (current-buffer))
+                  (buffer (git-bug-buffer repo full)))
+              (should (eq (current-buffer) here))
+              (should (eq buffer (git-bug-buffer repo full)))
+              (with-current-buffer buffer
+                (should (derived-mode-p 'git-bug-mode))
+                (should buffer-read-only)
+                (should (equal git-bug--buffer-id full))
+                (should (equal git-bug--buffer-human-id short))
+                (should (equal git-bug--buffer-repo (git-bug--repo-key repo)))
+                (should (string-match-p "Alpha" (buffer-string)))))
+            (should-error (git-bug-buffer repo full 'no-such-mode)
+                          :type 'user-error)
+            (git-bug-show repo full)
+            (should (derived-mode-p 'git-bug-mode))
+            (should (string-match-p "Alpha" (buffer-string))))
+        (when-let* ((buffer (get-buffer (format "*git-bug: %s*" short))))
+          (kill-buffer buffer))))))
+
+(ert-deftest git-bug-tests-library-buffer-bad-mode ()
+  "A mode outside `git-bug-mode' signals before a buffer exists."
+  (git-bug-tests--with-repo repo
+    (let* ((short (git-bug-tests--new-bug repo "Alpha"))
+           (full (git-bug-field (car (git-bug--list repo)) 'id))
+           (name (git-bug--viewer-name short full)))
+      (unwind-protect
+          (progn
+            (should-error (git-bug-buffer repo full 'fundamental-mode)
+                          :type 'user-error)
+            (should-not (get-buffer name)))
+        (when-let* ((buffer (get-buffer name)))
+          (kill-buffer buffer))))))
+
+(ert-deftest git-bug-tests-library-write-fetches-once ()
+  "Toggling in a viewer reads the bug back once and needs no hook."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Alpha")
+    (let* ((full (git-bug-field (car (git-bug--list repo)) 'id))
+           (buffer (git-bug-buffer repo full))
+           ;; The package refreshes its own views, so replacing the
+           ;; public hook must not stop a write from updating them.
+           (git-bug-change-functions nil)
+           (fetches 0))
+      (unwind-protect
+          (cl-letf* ((fetch (symbol-function 'git-bug--fetch-detail))
+                     ((symbol-function 'git-bug--fetch-detail)
+                      (lambda (&rest args)
+                        (cl-incf fetches)
+                        (apply fetch args))))
+            (with-current-buffer buffer
+              (git-bug-toggle-status-in-buffer)
+              (should (equal git-bug--buffer-status "closed"))
+              (should (string-match-p "closed" (buffer-string)))))
+        (kill-buffer buffer))
+      (should (= fetches 1)))))
+
+(ert-deftest git-bug-tests-library-viewer-refresh ()
+  "A change refreshes an open viewer whatever its buffer name."
+  (git-bug-tests--with-repo repo
+    (git-bug-tests--new-bug repo "Alpha")
+    (let* ((full (git-bug-field (car (git-bug--list repo)) 'id))
+           (buffer (git-bug-buffer repo full)))
+      (unwind-protect
+          (progn
+            (with-current-buffer buffer
+              (rename-buffer "git-bug-tests-viewer"))
+            (git-bug--add-comment repo full "Late comment\n")
+            (with-current-buffer buffer
+              (should (equal (buffer-name) "git-bug-tests-viewer"))
+              (should (string-match-p "Late comment" (buffer-string)))))
+        (kill-buffer buffer)))))
+
+(ert-deftest git-bug-tests-library-format ()
+  "The text renderers need no buffer, align and honor the faces flag."
+  (let* ((bugs (list (git-bug-tests--fake-bug "1a2b3c4" "Short" "open"
+                                               '("ui") 1 60)
+                     (git-bug-tests--fake-bug "5d6e7f8" "A longer title" "open"
+                                               '("core") 0 90)))
+         (git-bug-status-section-sort 'id)
+         (git-bug-status-section-label nil)
+         (git-bug-status-section-author nil)
+         (git-bug-status-section-scope 'open))
+    (let* ((text (git-bug-format-bug-list bugs nil))
+           (lines (split-string text "\n")))
+      (should-not (text-properties-at 0 text))
+      (should (= (length lines) 2))
+      (should (apply #'= (mapcar (lambda (line) (string-match "\\[" line)) lines)))
+      ;; The renderer and the section agree line by line.
+      (with-temp-buffer
+        (git-bug--insert-bugs "/nonexistent/" bugs)
+        (dolist (line lines)
+          (should (string-match-p
+                   (regexp-quote line)
+                   (buffer-substring-no-properties (point-min) (point-max)))))))
+    (let ((faces (git-bug-format-bug (car bugs) t))
+          (plain (git-bug-format-bug (car bugs) nil)))
+      (should (text-property-not-all 0 (length faces) 'font-lock-face nil faces))
+      (should (string-match-p "\\[ui\\]" faces))
+      (should (equal (substring-no-properties faces) plain)))
+    (should (equal (git-bug-format-bug-list nil) ""))))
 
 (ert-deftest git-bug-tests-broken-tracker-visible ()
   "A failing git-bug renders an unavailable section, not a broken status."
